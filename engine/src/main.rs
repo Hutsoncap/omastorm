@@ -1,5 +1,6 @@
 mod catalog;
 mod live;
+mod live_index;
 mod osm;
 mod protocol;
 mod sweep;

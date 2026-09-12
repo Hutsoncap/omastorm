@@ -930,6 +930,7 @@ dependencies = [
  "sha2",
  "tiny-skia",
  "tokio",
+ "xml",
 ]
 
 [[package]]

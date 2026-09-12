@@ -23,6 +23,9 @@ tiny-skia = { version = "0.12", default-features = false, features = ["std", "si
 # tile. `rustls` shares the TLS stack with `nexrad-data`; disabling default
 # features excludes charset, HTTP/2, and proxy discovery.
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# S3's delimiter listing names occupied rotating volume directories in one
+# response; the upstream decoder already uses this XML parser transitively.
+xml = "1.4"
 # Mapbox Vector Tile decoding (prost); default features off, since `wasm` is
 # the only one and it pulls geojson and wasm-bindgen.
 mvt-reader = { version = "2.5", default-features = false }
