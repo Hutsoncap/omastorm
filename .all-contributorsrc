@@ -114,6 +114,15 @@
       "contributions": [
         "userTesting"
       ]
+    },
+    {
+      "login": "yock",
+      "name": "Michael Yockey",
+      "avatar_url": "https://avatars.githubusercontent.com/u/306343?v=4",
+      "profile": "https://mikeyockey.com",
+      "contributions": [
+        "bug"
+      ]
     }
   ],
   "commitType": "docs"
