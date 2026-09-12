@@ -1,29 +1,28 @@
 //! Live Level II (DESIGN.md, live sweeps as built): the real-time chunk bucket polled with
-//! `nexrad-data`'s pull-based `ChunkIterator`, one task per selected station
+//! dated chunk listings, one task per selected station
 //! (DESIGN.md, engine runtime). Each chunk's radials feed an `Assembler`
 //! that keeps the lowest cut of the current volume; every chunk that grows
 //! or completes it is reported as an `Event::Sweep`, which `main.rs` turns
 //! into a republished texture and a `state` broadcast, so the sweep paints
 //! chunk by chunk as the antenna turns.
 //!
-//! Joining a volume in progress: the iterator hands over the newest chunk
-//! and, when that is not the volume's first, the Start chunk; the chunks in
-//! between that the VCP maps to the lowest cut are downloaded once, so the
+//! Joining a volume in progress: the poller finds the newest dated chunk
+//! and replays the Start and first lowest-cut chunks once, so the
 //! last complete lowest sweep shows within seconds of selecting a station
 //! and the next volume paints live. Every network call sits under a
 //! `tokio::time::timeout`, since the client sets none. The bucket is public
 //! and needs no credentials; nothing here runs until a client selects a
 //! station, so launch still fetches nothing.
 
-use crate::sweep::Sweep;
-use chrono::{SecondsFormat, Utc};
+use crate::{live_index, sweep::Sweep};
+use chrono::{NaiveDateTime, SecondsFormat, Utc};
 use nexrad_data::aws::realtime::{
-    Chunk, ChunkIdentifier, ChunkIterator, DownloadedChunk, VolumeIndex, download_chunk,
-    list_chunks_in_volume,
+    Chunk, ChunkIdentifier, ChunkType, DownloadedChunk, VolumeIndex, download_chunk,
 };
-use nexrad_data::result::{Error, aws::AWSError};
+use nexrad_data::result::Error;
 use nexrad_data::volume::Record;
 use nexrad_model::data::{Radial, RadialStatus};
+use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::{
     sync::mpsc::Sender,
@@ -33,16 +32,11 @@ use tokio::{
 /// NOAA's real-time bucket, named in frame provenance (`nexrad-data` owns
 /// the address).
 pub const BUCKET: &str = "unidata-nexrad-level2-chunks";
-/// Finding the latest volume is a binary search of listings; one chunk is
-/// one request.
+/// Finding the latest volume searches dated listings around the rotation.
 const START_TIMEOUT: Duration = Duration::from_secs(60);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
-/// Between polls when the next chunk is not there yet: the iterator's
-/// estimate when it has one, clamped; `IDLE` when it has none. Chunks land
-/// every 4–12 s.
+/// Between empty polls. Chunks land every 4–12 s.
 const IDLE: Duration = Duration::from_secs(2);
-const MIN_WAIT: Duration = Duration::from_secs(1);
-const MAX_WAIT: Duration = Duration::from_secs(10);
 /// After a failed call; doubles up to the maximum while the bucket stays
 /// unreachable. One failure is retried quietly (a pooled connection the
 /// bucket closed, say); the second in a row reports `offline`, and this
@@ -53,20 +47,20 @@ const OFFLINE_AFTER: u32 = 2;
 const RESTART_AFTER: u32 = 4;
 /// Higher cuts of the same volume still arrive every 4–12 s after the
 /// lowest cut ends. Bound the time without a chunk across empty polls,
-/// network errors, and requests still in flight: the iterator may be parked
-/// on a chunk that will never appear (a rotated volume or skipped sequence).
+/// network errors, and requests still in flight: a volume may be abandoned
+/// before its final chunk arrives, or a listing may lag the live rotation.
 /// Restart discovery instead of waiting until the UI goes UNAVAILABLE.
 const QUIET_RESTART: Duration = Duration::from_secs(90);
-/// Chunks replayed from a volume's start when the VCP could not be read and
-/// so no chunk can be mapped to a cut: the lowest cut of a super-resolution
-/// volume spans about four.
-const BLIND_REPLAY: usize = 12;
+/// Chunks replayed from a volume's start to cover its lowest cut. The lowest
+/// cut of a super-resolution volume spans about four chunks.
+const LOW_CUT_REPLAY: usize = 12;
 /// Volumes before the current one fetched on joining a station, newest
 /// first, so a fresh station has a loop to play rather than one frame. The
 /// fetch starts after `BACKFILL_DELAY`, so a hand-off passed while panning
 /// costs nothing, and ends with the poller. The bucket rotates volume
-/// numbers 1–999 and keeps a few hours; a volume's lowest cut is within
-/// its first `BACKFILL_CHUNKS` chunks or is given up on.
+/// numbers 1–999 and may retain older generations in each directory; a
+/// volume's lowest cut is within its first `BACKFILL_CHUNKS` chunks or is
+/// given up on.
 const BACKFILL_VOLUMES: usize = 12;
 const BACKFILL_DELAY: Duration = Duration::from_secs(3);
 const BACKFILL_CHUNKS: usize = 16;
@@ -268,63 +262,34 @@ async fn offline(events: &Sender<Event>, site: &str, reason: String) -> bool {
         .is_ok()
 }
 
-/// The chunks of `newest`'s volume before it that carry the lowest cut,
-/// downloaded in order: sequence 1 (unless `have_start`) up to the newest,
-/// those the VCP maps to elevation 1, or the first `BLIND_REPLAY` when the
-/// VCP is unknown. Used when joining a volume in progress and when a poll
-/// reaches the next volume after more than its first chunk landed.
-async fn earlier_chunks(
-    site: &str,
-    iterator: &ChunkIterator,
-    newest: &ChunkIdentifier,
-    have_start: bool,
-) -> Vec<DownloadedChunk> {
-    let mut chunks = Vec::new();
-    let first = if have_start { 2 } else { 1 };
-    if newest.sequence() <= first {
-        return chunks;
-    }
-    let volume = *newest.volume();
-    let ids = match timeout(CALL_TIMEOUT, list_chunks_in_volume(site, volume, 100)).await {
-        Ok(Ok(ids)) => ids,
-        Ok(Err(e)) => {
-            live_log(
-                site,
-                format_args!("listing volume {}: {e}", volume.as_number()),
-            );
-            return chunks;
-        }
-        Err(_) => {
-            live_log(
-                site,
-                format_args!("listing volume {} timed out", volume.as_number()),
-            );
-            return chunks;
-        }
+/// Download one dated chunk; caller bounds the whole operation with a timeout.
+async fn fetch(site: &str, id: &ChunkIdentifier) -> Result<DownloadedChunk, Error> {
+    let (identifier, chunk) = download_chunk(site, id).await?;
+    Ok(DownloadedChunk {
+        identifier,
+        chunk,
+        attempts: 1,
+    })
+}
+
+/// Replay the Start and the first low-cut chunks, then the latest chunk if
+/// joining later in the volume. The listing has already been narrowed to
+/// one dated generation, so old keys cannot leak into a new sweep.
+async fn replay(site: &str, ids: &[ChunkIdentifier]) -> Vec<DownloadedChunk> {
+    let Some(newest) = ids.last() else {
+        return Vec::new();
     };
-    for id in ids {
-        let sequence = id.sequence();
-        if sequence < first || sequence >= newest.sequence() {
-            continue;
-        }
-        let wanted = match iterator.elevation_mapper() {
-            Some(mapper) => mapper.get_sequence_elevation_number(sequence) == Some(1),
-            None => sequence <= BLIND_REPLAY,
-        };
-        if !wanted {
-            continue;
-        }
-        match timeout(CALL_TIMEOUT, download_chunk(site, &id)).await {
-            Ok(Ok((identifier, chunk))) => chunks.push(DownloadedChunk {
-                identifier,
-                chunk,
-                attempts: 1,
-            }),
+    let mut chunks = Vec::new();
+    for id in ids
+        .iter()
+        .filter(|id| id.sequence() <= LOW_CUT_REPLAY || id.name() == newest.name())
+    {
+        match timeout(CALL_TIMEOUT, fetch(site, id)).await {
+            Ok(Ok(chunk)) => chunks.push(chunk),
             Ok(Err(e)) => live_log(site, format_args!("replaying {}: {e}", id.name())),
             Err(_) => live_log(site, format_args!("replaying {} timed out", id.name())),
         }
     }
-    chunks.sort_by_key(|chunk| chunk.identifier.sequence());
     chunks
 }
 
@@ -340,12 +305,19 @@ fn previous_volume(current: VolumeIndex, back: usize) -> VolumeIndex {
 /// volume whose start time is already catalogued (`cached`) costs one
 /// chunk; a volume with no Start chunk in the listing is skipped; a listing
 /// failure ends the backfill, since the bucket is not answering.
-async fn backfill(site: String, events: Sender<Event>, current: VolumeIndex, cached: Vec<i64>) {
+async fn backfill(
+    site: String,
+    events: Sender<Event>,
+    current: VolumeIndex,
+    current_stamp: NaiveDateTime,
+    cached: Vec<i64>,
+) {
     sleep(BACKFILL_DELAY).await;
     let mut fetched = 0;
+    let mut previous_stamp = current_stamp;
     for back in 1..=BACKFILL_VOLUMES {
         let volume = previous_volume(current, back);
-        let mut ids = match timeout(CALL_TIMEOUT, list_chunks_in_volume(&site, volume, 100)).await {
+        let ids = match timeout(CALL_TIMEOUT, live_index::list(&site, volume)).await {
             Ok(Ok(ids)) => ids,
             Ok(Err(e)) => {
                 live_log(
@@ -362,10 +334,17 @@ async fn backfill(site: String, events: Sender<Event>, current: VolumeIndex, cac
                 return;
             }
         };
-        ids.sort_by_key(ChunkIdentifier::sequence);
+        let Some((stamp, ids)) = live_index::generation(ids, |stamp| stamp < previous_stamp) else {
+            continue;
+        };
+        // Skip leftovers from an earlier trip around the ring.
+        if previous_stamp - stamp > chrono::Duration::hours(3) {
+            continue;
+        }
         if ids.first().map(ChunkIdentifier::sequence) != Some(1) {
             continue;
         }
+        previous_stamp = stamp;
         let name = format!("{site}/{:03}", volume.as_number());
         let mut assembler = Assembler::default();
         for id in ids.iter().take(BACKFILL_CHUNKS) {
@@ -445,6 +424,71 @@ async fn wait_for_progress<S, T, F: std::future::Future<Output = (S, Option<T>)>
     .await
 }
 
+/// The exact generation and sequence being followed through the rotating ring.
+struct Cursor {
+    volume: VolumeIndex,
+    stamp: NaiveDateTime,
+    sequence: usize,
+    ended: bool,
+    pending: VecDeque<ChunkIdentifier>,
+}
+
+impl Cursor {
+    fn new(volume: VolumeIndex, stamp: NaiveDateTime, newest: &ChunkIdentifier) -> Self {
+        Self {
+            volume,
+            stamp,
+            sequence: newest.sequence(),
+            ended: newest.chunk_type() == ChunkType::End,
+            pending: VecDeque::new(),
+        }
+    }
+
+    fn queue_current(&mut self, ids: Vec<ChunkIdentifier>) {
+        let mut fresh: Vec<_> = ids
+            .into_iter()
+            .filter(|id| *id.date_time_prefix() == self.stamp && id.sequence() > self.sequence)
+            .collect();
+        fresh.sort_by_key(ChunkIdentifier::sequence);
+        self.pending.extend(fresh);
+    }
+
+    fn queue_next(&mut self, volume: VolumeIndex, ids: Vec<ChunkIdentifier>) {
+        if let Some((stamp, ids)) = live_index::generation(ids, |stamp| stamp > self.stamp) {
+            self.volume = volume;
+            self.stamp = stamp;
+            self.sequence = 0;
+            self.ended = false;
+            self.pending = ids.into();
+        }
+    }
+
+    /// Return the next dated chunk. A reused next-volume directory may start
+    /// with keys from days ago; only a generation newer than this cursor is
+    /// eligible, and all its available chunks are queued in sequence order.
+    async fn next(&mut self, site: &str) -> Result<Option<DownloadedChunk>, Error> {
+        if self.pending.is_empty() {
+            if !self.ended {
+                let ids = live_index::list(site, self.volume).await?;
+                self.queue_current(ids);
+            }
+            if self.pending.is_empty() {
+                let next = self.volume.next();
+                let ids = live_index::list(site, next).await?;
+                self.queue_next(next, ids);
+            }
+        }
+        let Some(id) = self.pending.front() else {
+            return Ok(None);
+        };
+        let chunk = fetch(site, id).await?;
+        self.sequence = id.sequence();
+        self.ended = id.chunk_type() == ChunkType::End;
+        self.pending.pop_front();
+        Ok(Some(chunk))
+    }
+}
+
 /// Poll `site` until the task is aborted or the event channel closes.
 /// `cached` holds the start times of the frames already catalogued for the
 /// station, so the backfill does not fetch them again and a rediscovery
@@ -456,22 +500,25 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
     let mut known = cached;
     let mut skip_known = skip_known;
     loop {
-        let init = match timeout(START_TIMEOUT, ChunkIterator::start(&site)).await {
-            Ok(Ok(init)) => init,
-            Ok(Err(e)) => {
-                // An empty listing is the bucket's answer, not its absence.
-                let event = if matches!(e, Error::AWS(AWSError::LatestVolumeNotFound)) {
-                    Event::Silent {
+        let (volume, stamp, ids) = match timeout(START_TIMEOUT, live_index::latest(&site)).await {
+            Ok(Ok(Some(init))) => init,
+            Ok(Ok(None)) => {
+                if events
+                    .send(Event::Silent {
                         site: site.clone(),
                         reason: "the bucket holds no volume for this station".into(),
-                    }
-                } else {
-                    Event::Offline {
-                        site: site.clone(),
-                        reason: format!("finding the latest volume: {e}"),
-                    }
-                };
-                if events.send(event).await.is_err() {
+                    })
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                sleep(back_off).await;
+                back_off = (back_off * 2).min(MAX_BACK_OFF);
+                continue;
+            }
+            Ok(Err(e)) => {
+                if !offline(&events, &site, format!("finding the latest volume: {e}")).await {
                     return;
                 }
                 sleep(back_off).await;
@@ -488,28 +535,16 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
             }
         };
         back_off = BACK_OFF;
-        let mut iterator = init.iterator;
         let mut assembler = Assembler::default();
-
-        // Replay the volume so far: the Start chunk, the chunks between it
-        // and the newest that the VCP maps to the lowest cut, and the newest.
-        let newest = init.latest_chunk;
-        let mut replay = earlier_chunks(
-            &site,
-            &iterator,
-            &newest.identifier,
-            init.start_chunk.is_some(),
-        )
-        .await;
-        if let Some(start) = init.start_chunk {
-            replay.insert(0, start);
-        }
+        let Some(newest) = ids.last() else { continue };
+        let mut cursor = Cursor::new(volume, stamp, newest);
+        let replay = replay(&site, &ids).await;
         live_log(
             &site,
             format_args!(
                 "joined volume {} at chunk {}, replaying {} chunks",
-                newest.identifier.volume().as_number(),
-                newest.identifier.name(),
+                volume.as_number(),
+                newest.name(),
                 replay.len()
             ),
         );
@@ -517,16 +552,14 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
             backfilling = Some(AbortOnDrop(tokio::spawn(backfill(
                 site.clone(),
                 events.clone(),
-                *newest.identifier.volume(),
+                volume,
+                stamp,
                 known.clone(),
             ))));
         }
-        replay.push(newest);
-        let mut previous_volume = None;
         {
             let replay_known = skip_known.then_some(known.as_slice());
             for chunk in &replay {
-                previous_volume = Some(*chunk.identifier.volume());
                 if !deliver(&mut assembler, &site, chunk, &events, replay_known).await {
                     return;
                 }
@@ -542,23 +575,18 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
         let mut failures = 0;
         let mut deadline = Instant::now() + QUIET_RESTART;
         loop {
-            let next = wait_for_progress(deadline, iterator, async |mut iterator| {
-                let result = match timeout(CALL_TIMEOUT, iterator.try_next()).await {
+            let next = wait_for_progress(deadline, cursor, async |mut cursor| {
+                let result = match timeout(CALL_TIMEOUT, cursor.next(&site)).await {
                     Ok(Ok(None)) => {
-                        let wait = iterator
-                            .time_until_next()
-                            .and_then(|d| d.to_std().ok())
-                            .unwrap_or(IDLE)
-                            .clamp(MIN_WAIT, MAX_WAIT);
-                        sleep(wait).await;
+                        sleep(IDLE).await;
                         None
                     }
                     result => Some(result),
                 };
-                (iterator, result)
+                (cursor, result)
             })
             .await;
-            let Ok((next_iterator, next)) = next else {
+            let Ok((next_cursor, next)) = next else {
                 live_log(
                     &site,
                     format_args!(
@@ -568,23 +596,16 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
                 );
                 break;
             };
-            iterator = next_iterator;
+            cursor = next_cursor;
             match next {
                 Ok(Ok(Some(chunk))) => {
                     failures = 0;
-                    deadline = Instant::now() + QUIET_RESTART;
-                    // The iterator enters the next volume at its newest chunk;
-                    // a poll that arrived after more than the Start chunk
-                    // landed fetches the ones it skipped first.
-                    if previous_volume != Some(*chunk.identifier.volume()) {
-                        previous_volume = Some(*chunk.identifier.volume());
-                        for skipped in
-                            earlier_chunks(&site, &iterator, &chunk.identifier, false).await
-                        {
-                            if !deliver(&mut assembler, &site, &skipped, &events, None).await {
-                                return;
-                            }
-                        }
+                    // Walking old generations is not progress: rediscover if
+                    // no genuinely recent chunk arrives within the deadline.
+                    if Utc::now().naive_utc() - *chunk.identifier.date_time_prefix()
+                        < chrono::Duration::minutes(30)
+                    {
+                        deadline = Instant::now() + QUIET_RESTART;
                     }
                     if !deliver(&mut assembler, &site, &chunk, &events, None).await {
                         return;
@@ -634,6 +655,11 @@ mod tests {
     use nexrad_data::volume::File;
     use std::fs;
 
+    fn chunk_id(volume: usize, name: &str) -> ChunkIdentifier {
+        ChunkIdentifier::from_name("KJAX".into(), VolumeIndex::new(volume), name.into(), None)
+            .unwrap()
+    }
+
     #[test]
     fn earlier_volumes_wrap_through_the_rotation() {
         assert_eq!(previous_volume(VolumeIndex::new(598), 1).as_number(), 597);
@@ -641,6 +667,61 @@ mod tests {
         assert_eq!(previous_volume(VolumeIndex::new(5), 5).as_number(), 999);
         assert_eq!(previous_volume(VolumeIndex::new(1), 1).as_number(), 999);
         assert_eq!(previous_volume(VolumeIndex::new(999), 12).as_number(), 987);
+    }
+
+    #[test]
+    fn next_volume_ignores_leftover_chunks_and_keeps_the_new_sweep_in_order() {
+        let old = chunk_id(129, "20260909-050000-055-E");
+        let mut cursor = Cursor::new(VolumeIndex::new(129), *old.date_time_prefix(), &old);
+        cursor.queue_next(
+            VolumeIndex::new(130),
+            vec![chunk_id(130, "20260908-050500-001-S")],
+        );
+        assert_eq!(cursor.volume.as_number(), 129);
+        assert!(cursor.pending.is_empty());
+        cursor.queue_next(
+            VolumeIndex::new(130),
+            vec![
+                chunk_id(130, "20260909-050500-001-S"),
+                chunk_id(130, "20260912-170153-002-I"),
+                chunk_id(130, "20260912-170153-001-S"),
+            ],
+        );
+        assert_eq!(cursor.volume.as_number(), 130);
+        assert_eq!(
+            cursor
+                .pending
+                .iter()
+                .map(ChunkIdentifier::sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(
+            cursor
+                .pending
+                .iter()
+                .all(|id| id.name().starts_with("20260912"))
+        );
+    }
+
+    #[test]
+    fn current_volume_does_not_replay_old_or_already_seen_chunks() {
+        let current = chunk_id(130, "20260912-170153-004-I");
+        let mut cursor = Cursor::new(VolumeIndex::new(130), *current.date_time_prefix(), &current);
+        cursor.queue_current(vec![
+            chunk_id(130, "20260909-050500-055-E"),
+            current,
+            chunk_id(130, "20260912-170153-006-I"),
+            chunk_id(130, "20260912-170153-005-I"),
+        ]);
+        assert_eq!(
+            cursor
+                .pending
+                .iter()
+                .map(ChunkIdentifier::sequence)
+                .collect::<Vec<_>>(),
+            vec![5, 6]
+        );
     }
 
     #[test]

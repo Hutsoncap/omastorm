@@ -45,8 +45,11 @@ and `nexrad-model` dependencies. It reads through the lowest cut, sorts rays
 stably by azimuth, and publishes a polar sweep texture and azimuth lookup.
 The UI samples these directly; radar arrays never enter JSON or QML JavaScript.
 
-`src/live.rs` polls the real-time chunk bucket through `ChunkIterator`,
-replays the current volume's lowest cut, and assembles incoming radials.
+`src/live_index.rs` lists occupied volume directories, then searches their
+rotating order by each one's newest scan timestamp. Expired directories are
+excluded from the search, as are older generations still present in the same
+directory. `src/live.rs` then polls dated chunks, replays the current
+volume's lowest cut, and assembles incoming radials.
 Each chunk that grows the cut publishes a partial frame; the cut's final
 radial or the next cut completes it. Gaps beyond 0.75° from any ray remain
 blank. Selecting another station cancels the poller and discards its late events.
@@ -54,10 +57,11 @@ A background backfill fetches up to twelve earlier volumes, skipping cached ones
 SAILS and MRLE extra low-level cuts are not separate frames.
 
 The poller bounds requests with timeouts and retries with backoff. Four
-failed chunk fetches restart discovery. `try_next` returning `None` is not a
-failure, but 90 seconds with no chunk at all (higher cuts of a live volume
-still arrive every 4–12 s) means the iterator is parked on a volume the
-bucket has rotated off, so discovery starts over. Independently, the engine
+failed chunk fetches restart discovery. An empty listing is normal between
+chunks, but 90 seconds without a recent chunk (higher cuts of a live volume
+still arrive every 4–12 s) restarts discovery. The poller ignores leftover
+chunks from an earlier volume cycle on both join and transition, and backfill
+uses only the matching dated generation. Independently, the engine
 respawns a poller whose task has exited, or whose newest radial is thirty
 minutes old and has not been rediscovered since. A rediscovery that finds
 only a sweep already in the catalog does not republish it or clear
