@@ -42,7 +42,7 @@ Item {
     // The timeline (DESIGN.md): the station's frames oldest
     // first with the sweep in progress last; the engine owns the position.
     readonly property var frames: state ? state.timeline : []
-    readonly property int frameIndex: scan ? frames.findIndex(f => f.id === scan.id) : -1
+    readonly property int frameIndex: scan ? seekableFrames.findIndex(f => f.id === scan.id) : -1
     readonly property bool playing: state ? state.playing : false
     readonly property var newestComplete: { var done = frames.filter(f => f.status === "complete"); return done.length ? done[done.length - 1] : null; }
     // The connection condition while live (DESIGN.md):
@@ -99,22 +99,26 @@ Item {
         var timeStr = stamp12h ? Qt.formatTime(d, "h:mm AP") : Qt.formatTime(d, "HH:mm");
         return dateStr + " · " + timeStr + " " + Qt.formatTime(d, "t");
     }
-    // History fills 60 positions from the left when the strip is wide enough.
-    // Compact widths drop the empty pads — at ~5 px/slot they read as a
-    // dotted cliff after the playhead instead of "room to fill."
+    // One tick per timeline entry. Reserved/pending slots are hollow and
+    // cannot be sought. No empty pads out to 60.
     readonly property var slots: {
         var result = [];
         for (var j = 0; j < frames.length; j++)
-            result.push({id: frames[j].id, partial: frames[j].status === "partial", empty: false});
-        if (!win.compact) {
-            for (var i = frames.length; i < 60; i++) result.push({empty: true, partial: false});
-        }
+            result.push({
+                id: frames[j].id,
+                partial: frames[j].status === "partial",
+                pending: frames[j].status === "pending"
+            });
         return result;
     }
-    readonly property int currentSlot: scan ? slots.findIndex(s => !s.empty && s.id === scan.id) : -1
-    function togglePlay() { if (frames.length > 1) engine.send({type: playing ? "pause" : "play"}); }
-    function step(delta) { if (frames.length > 1) engine.send({type: "step", delta: delta}); }
-    function jump(toNewest) { if (frames.length > 1) engine.send({type: "seek", id: frames[toNewest ? frames.length - 1 : 0].id}); }
+    readonly property var seekableFrames: frames.filter(f => f.status !== "pending")
+    readonly property int currentSlot: scan ? slots.findIndex(s => s.id === scan.id) : -1
+    function togglePlay() { if (frames.filter(f => f.status === "complete").length > 1) engine.send({type: playing ? "pause" : "play"}); }
+    function step(delta) { if (seekableFrames.length > 1) engine.send({type: "step", delta: delta}); }
+    function jump(toNewest) {
+        if (seekableFrames.length < 2) return;
+        engine.send({type: "seek", id: seekableFrames[toNewest ? seekableFrames.length - 1 : 0].id});
+    }
     readonly property int bands: scan ? scan.palette.length : 0
     function legendLabel(index) {
         var bounds = scan.bounds;
@@ -876,11 +880,11 @@ Item {
                     id: transport
                     Layout.alignment: Qt.AlignBottom
                     spacing: 5
-                    GlyphButton { glyph: "first"; visible: !win.compact; enabled: app.frames.length > 1; onClicked: app.jump(false) }
-                    GlyphButton { glyph: "back"; enabled: app.frames.length > 1; onClicked: app.step(-1) }
-                    GlyphButton { glyph: app.playing ? "pause" : "play"; selected: app.playing; enabled: app.frames.length > 1; onClicked: app.togglePlay() }
-                    GlyphButton { glyph: "fwd"; enabled: app.frames.length > 1; onClicked: app.step(1) }
-                    GlyphButton { glyph: "last"; visible: !win.compact; enabled: app.frames.length > 1; onClicked: app.jump(true) }
+                    GlyphButton { glyph: "first"; visible: !win.compact; enabled: app.seekableFrames.length > 1; onClicked: app.jump(false) }
+                    GlyphButton { glyph: "back"; enabled: app.seekableFrames.length > 1; onClicked: app.step(-1) }
+                    GlyphButton { glyph: app.playing ? "pause" : "play"; selected: app.playing; enabled: app.frames.filter(f => f.status === "complete").length > 1; onClicked: app.togglePlay() }
+                    GlyphButton { glyph: "fwd"; enabled: app.seekableFrames.length > 1; onClicked: app.step(1) }
+                    GlyphButton { glyph: "last"; visible: !win.compact; enabled: app.seekableFrames.length > 1; onClicked: app.jump(true) }
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -901,7 +905,7 @@ Item {
                         LabelText {
                             visible: !win.compact && app.frameIndex >= 0
                             horizontalAlignment: Text.AlignRight
-                            text: (app.frameIndex + 1) + " / " + app.frames.length
+                            text: (app.frameIndex + 1) + " / " + app.seekableFrames.length
                             font.pixelSize: 10
                             opacity: .65
                         }
@@ -915,20 +919,17 @@ Item {
                             Rectangle {
                                 required property var modelData
                                 required property int index
-                                readonly property bool current: !modelData.empty && index === app.currentSlot
+                                readonly property bool current: index === app.currentSlot
+                                readonly property bool hollow: modelData.partial || modelData.pending
                                 readonly property bool tall: current || modelData.partial
                                 x: app.slots.length > 1 ? Math.round(index * (strip.width - width) / (app.slots.length - 1)) : Math.round((strip.width - width) / 2)
                                 y: Math.round((strip.height - height) / 2)
                                 width: tall ? 3 : 2
-                                height: modelData.empty ? 3 : tall ? 14 : 8
-                                // Compact (no empty pads): even weight so a mid-loop
-                                // playhead does not cliff into dimmer stubs.
-                                color: current ? app.theme.accent : modelData.partial ? "transparent"
-                                    : Qt.alpha(app.theme.foreground, modelData.empty ? .10
-                                        : win.compact ? .40
-                                        : index > app.currentSlot ? .28 : .42)
-                                border.width: modelData.partial && !current ? 1 : 0
-                                border.color: app.theme.accent
+                                height: tall ? 14 : 8
+                                color: current ? app.theme.accent : hollow ? "transparent"
+                                    : Qt.alpha(app.theme.foreground, index > app.currentSlot ? .28 : .42)
+                                border.width: hollow && !current ? 1 : 0
+                                border.color: modelData.pending ? Qt.alpha(app.theme.foreground, .28) : app.theme.accent
                             }
                         }
                         // Dragging scrubs: the nearest frame under the pointer is sought
@@ -937,13 +938,13 @@ Item {
                             anchors.fill: parent
                             anchors.topMargin: -6
                             anchors.bottomMargin: -18
-                            enabled: app.frames.length > 1
+                            enabled: app.seekableFrames.length > 1
                             property string target: ""
                             function scrub(mx) {
                                 var n = app.slots.length;
                                 if (n < 2) return;
                                 var i = Math.round(Math.max(0, Math.min(1, mx / strip.width)) * (n - 1));
-                                if (app.slots[i].empty) return;
+                                if (app.slots[i].pending) return;
                                 var id = app.slots[i].id;
                                 if (id && id !== target) { target = id; engine.send({type: "seek", id: id}); }
                             }

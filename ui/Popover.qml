@@ -11,12 +11,16 @@ FocusScope {
     readonly property var state: connection.state
     readonly property var scan: state ? state.frame : null
     readonly property var frames: state ? state.timeline : []
-    // Popover is too narrow for the window's fixed 60 empties. One tick per
-    // frame, no gap stubs, pixel-snapped — same language, denser strip.
+    // One tick per timeline entry, no empty pads. Pending slots are hollow
+    // and are not seekable; the window owns scrub.
     readonly property var slots: {
         var result = [];
         for (var j = 0; j < frames.length; j++)
-            result.push({id: frames[j].id, partial: frames[j].status === "partial"});
+            result.push({
+                id: frames[j].id,
+                partial: frames[j].status === "partial",
+                pending: frames[j].status === "pending"
+            });
         return result;
     }
     readonly property int currentSlot: scan ? slots.findIndex(s => s.id === scan.id) : -1
@@ -217,14 +221,15 @@ FocusScope {
                             required property var modelData
                             required property int index
                             readonly property bool current: index === card.currentSlot
+                            readonly property bool hollow: modelData.partial || modelData.pending
                             x: card.slots.length > 1 ? Math.round(index * (strip.width - width) / (card.slots.length - 1)) : Math.round((strip.width - width) / 2)
                             y: Math.round((strip.height - height) / 2)
                             width: current || modelData.partial ? 3 : 2
                             height: current || modelData.partial ? 14 : 10
-                            color: current ? card.theme.accent : modelData.partial ? "transparent"
+                            color: current ? card.theme.accent : hollow ? "transparent"
                                 : Qt.alpha(card.theme.foreground, .40)
-                            border.width: modelData.partial && !current ? 1 : 0
-                            border.color: card.theme.accent
+                            border.width: hollow && !current ? 1 : 0
+                            border.color: modelData.pending ? Qt.alpha(card.theme.foreground, .28) : card.theme.accent
                         }
                     }
                 }
