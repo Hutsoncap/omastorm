@@ -17,6 +17,13 @@ docs/media/*
 # Local working notes, never committed
 PLAN.md
 AGENTS.md
+CLAUDE.md
+GEMINI.md
+.cursorrules
+
+# Agent files installed from the sibling wesleygrimes/agents monorepo.
+# Never ship: marketplace review treats agent-control files as a listing blocker.
+.cursor/
 
 # Editor and tool state
 .venv/

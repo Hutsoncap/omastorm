@@ -90,6 +90,14 @@ run = "bash scripts/build-engine-release.sh"
 description = "Local fallback: publish engine-<version> from a laptop (candidate, draft, publish, verify, write pin; --dry-run, --yes)"
 run = "bash scripts/release-engine.sh"
 
+[tasks.agents-link]
+description = "Symlink the sibling wesleygrimes/agents overlay into this gitignored tree"
+run = "bash ../agents/scripts/link.sh"
+
+[tasks.agents-unlink]
+description = "Remove the wesleygrimes/agents overlay from this checkout"
+run = "bash ../agents/scripts/unlink.sh"
+
 [tasks.clean]
 description = "Remove Cargo output and scratch runtime dirs"
 run = [
