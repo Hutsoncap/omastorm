@@ -318,8 +318,12 @@ pub async fn latest(
     let after = now - RECENT;
     let occupied: HashSet<usize> = volumes.iter().map(VolumeIndex::as_number).collect();
     let ordered = spread_ring(volumes);
-    let first: Vec<_> = ordered.iter().copied().take(PROBE_CAP).collect();
-    let rest: Vec<_> = ordered.iter().copied().skip(PROBE_CAP).collect();
+    // Chunks expire in about an hour, so the live run may be only ~8
+    // folders wide. Sample tightly enough that the first wave cannot
+    // step over it.
+    let sample = ordered.len().div_ceil(6).max(PROBE_CAP);
+    let first: Vec<_> = ordered.iter().copied().take(sample).collect();
+    let rest: Vec<_> = ordered.iter().copied().skip(sample).collect();
     let mut best = probe_volumes(site, first, after, |found| now - found.0 <= RECENT).await;
     if best
         .as_ref()
