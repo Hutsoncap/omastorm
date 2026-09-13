@@ -47,9 +47,10 @@ The UI samples these directly; radar arrays never enter JSON or QML JavaScript.
 
 `src/live_index.rs` lists occupied volume directories and joins the
 generation with the newest name timestamp. Leftover directories in the
-1–999 ring cannot win on position. Older generations in the same directory
-are ignored. `src/live.rs` then polls dated chunks, replays the current
-volume's lowest cut, and assembles incoming radials.
+1–999 ring cannot win on position. Join stops listing leftover directories
+once a name timestamp from the last minute is in hand. Older generations
+in the same directory are ignored. `src/live.rs` then polls dated chunks,
+replays the current volume's lowest cut, and assembles incoming radials.
 Each chunk that grows the cut publishes a partial frame; the cut's final
 radial or the next cut completes it. Gaps beyond 0.75° from any ray remain
 blank. Selecting another station cancels the poller and discards its late events.

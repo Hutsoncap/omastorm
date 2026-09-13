@@ -3,9 +3,10 @@
 //! expired directories leave holes in that ring. Every decision here uses
 //! the timestamp in a chunk's name. Join lists occupied directories, then
 //! picks the generation with the newest name timestamp. Ring position
-//! cannot win.
+//! cannot win. Leftover directories are not waited out once a live stamp
+//! is already in hand.
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, TimeDelta, Utc};
 use nexrad_data::aws::realtime::{ChunkIdentifier, VolumeIndex, list_chunks_in_volume};
 use nexrad_data::result::Result;
 use std::collections::HashMap;
@@ -16,7 +17,21 @@ use xml::reader::{EventReader, XmlEvent};
 
 pub const LIST_LIMIT: usize = 1000;
 /// How many volume listings run at once when finding the newest stamp.
-const PROBE_CAP: usize = 16;
+const PROBE_CAP: usize = 64;
+/// A name timestamp this fresh is the live volume. Leftover directories
+/// from an earlier trip around the ring cannot beat it, so join stops
+/// asking them. Tight enough that the previous scan (several minutes old)
+/// does not win the race.
+const LIVE_AGE: TimeDelta = TimeDelta::seconds(90);
+/// Accept a name a few seconds ahead of the local clock.
+const CLOCK_SKEW: TimeDelta = TimeDelta::seconds(30);
+
+/// True when `stamp` is the live scan: no older than `LIVE_AGE`, and not
+/// far in the future.
+fn stamp_is_live(stamp: NaiveDateTime, now: NaiveDateTime) -> bool {
+    let age = now - stamp;
+    age <= LIVE_AGE && age >= -CLOCK_SKEW
+}
 
 /// The newest dated generation in one directory, with its chunks in order.
 /// `accept` lets backfill exclude generations newer than the active scan and
@@ -142,7 +157,9 @@ async fn occupied_volumes(site: &str) -> std::result::Result<Vec<VolumeIndex>, S
 /// The newest dated generation on the station, with its chunks in order.
 /// Occupied directories are listed once, then each is probed for its
 /// newest name timestamp. That is one listing per directory, not one per
-/// leftover key, so a leftover-heavy station still finishes.
+/// leftover key. Probes stop once a live stamp is in hand: leftover
+/// directories cannot be newer, and backfill still walks earlier volumes
+/// after join.
 pub async fn latest(
     site: &str,
 ) -> std::result::Result<Option<(VolumeIndex, NaiveDateTime, Vec<ChunkIdentifier>)>, String> {
@@ -150,6 +167,7 @@ pub async fn latest(
     if volumes.is_empty() {
         return Ok(None);
     }
+    let now = Utc::now().naive_utc();
     let site = site.to_owned();
     let sem = Arc::new(Semaphore::new(PROBE_CAP));
     let mut set = JoinSet::new();
@@ -170,6 +188,13 @@ pub async fn latest(
         match &best {
             Some((best_stamp, _, _)) if stamp <= *best_stamp => {}
             _ => best = Some((stamp, volume, ids)),
+        }
+        if best
+            .as_ref()
+            .is_some_and(|(stamp, _, _)| stamp_is_live(*stamp, now))
+        {
+            set.abort_all();
+            break;
         }
     }
     Ok(best.map(|(stamp, volume, ids)| (volume, stamp, ids)))
@@ -313,5 +338,20 @@ mod tests {
             vec![1, 69, 999]
         );
         assert!(parse_volumes(&body.replace("false", "true"), "KFCX").is_err());
+    }
+
+    #[test]
+    fn a_stamp_from_the_last_minute_is_live() {
+        let now = NaiveDate::from_ymd_opt(2026, 9, 13)
+            .unwrap()
+            .and_hms_opt(14, 0, 0)
+            .unwrap();
+        assert!(stamp_is_live(now, now));
+        assert!(stamp_is_live(now - TimeDelta::seconds(30), now));
+        assert!(stamp_is_live(now - TimeDelta::seconds(90), now));
+        assert!(stamp_is_live(now + TimeDelta::seconds(10), now));
+        assert!(!stamp_is_live(now - TimeDelta::seconds(91), now));
+        assert!(!stamp_is_live(now - TimeDelta::minutes(8), now));
+        assert!(!stamp_is_live(now + TimeDelta::seconds(31), now));
     }
 }
