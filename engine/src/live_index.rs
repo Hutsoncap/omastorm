@@ -201,6 +201,7 @@ async fn probe_volumes(
     site: &str,
     volumes: Vec<VolumeIndex>,
     after: NaiveDateTime,
+    stop: impl Fn(&Found) -> bool,
 ) -> Option<Found> {
     if volumes.is_empty() {
         return None;
@@ -221,6 +222,10 @@ async fn probe_volumes(
     while let Some(joined) = set.join_next().await {
         if let Some(got) = joined.ok().flatten() {
             keep_newest(&mut best, got);
+            if best.as_ref().is_some_and(&stop) {
+                set.abort_all();
+                break;
+            }
         }
     }
     best
@@ -315,7 +320,7 @@ pub async fn latest(
     let ordered = spread_ring(volumes);
     let first: Vec<_> = ordered.iter().copied().take(PROBE_CAP).collect();
     let rest: Vec<_> = ordered.iter().copied().skip(PROBE_CAP).collect();
-    let mut best = probe_volumes(site, first, after).await;
+    let mut best = probe_volumes(site, first, after, |found| now - found.0 <= RECENT).await;
     if best
         .as_ref()
         .is_some_and(|(stamp, _, _)| stamp_is_live(*stamp, now))
@@ -329,6 +334,7 @@ pub async fn latest(
             site,
             neighbor_volumes(&occupied, volume.as_number(), CLUSTER_RADIUS),
             after,
+            |found| stamp_is_live(found.0, now),
         )
         .await
         {
@@ -336,7 +342,7 @@ pub async fn latest(
         }
         return Ok(best.map(|(stamp, volume, ids)| (volume, stamp, ids)));
     }
-    if let Some(got) = probe_volumes(site, rest, after).await {
+    if let Some(got) = probe_volumes(site, rest, after, |found| stamp_is_live(found.0, now)).await {
         keep_newest(&mut best, got);
     }
     Ok(best.map(|(stamp, volume, ids)| (volume, stamp, ids)))
