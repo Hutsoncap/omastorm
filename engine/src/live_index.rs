@@ -1,16 +1,22 @@
 //! Find the current generation of rotating Level II chunk directories.
 //! S3 can retain keys from an earlier trip through volumes 1–999, while
 //! expired directories leave holes in that ring. Every decision here uses
-//! the timestamp in a chunk's name, never the directory number or the first
-//! key returned by a listing.
+//! the timestamp in a chunk's name. Join lists occupied directories, then
+//! picks the generation with the newest name timestamp. Ring position
+//! cannot win.
 
 use chrono::NaiveDateTime;
 use nexrad_data::aws::realtime::{ChunkIdentifier, VolumeIndex, list_chunks_in_volume};
 use nexrad_data::result::Result;
-use std::future::Future;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use xml::reader::{EventReader, XmlEvent};
 
 pub const LIST_LIMIT: usize = 1000;
+/// How many volume listings run at once when finding the newest stamp.
+const PROBE_CAP: usize = 16;
 
 /// The newest dated generation in one directory, with its chunks in order.
 /// `accept` lets backfill exclude generations newer than the active scan and
@@ -34,6 +40,32 @@ pub fn generation(
 
 pub async fn list(site: &str, volume: VolumeIndex) -> Result<Vec<ChunkIdentifier>> {
     list_chunks_in_volume(site, volume, LIST_LIMIT).await
+}
+
+/// Among every listed chunk, the volume whose newest generation is latest.
+/// Leftover directories inside the current cycle cannot win on ring position.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn latest_from_chunks(
+    ids: Vec<ChunkIdentifier>,
+) -> Option<(VolumeIndex, NaiveDateTime, Vec<ChunkIdentifier>)> {
+    let mut by_volume: HashMap<usize, Vec<ChunkIdentifier>> = HashMap::new();
+    for id in ids {
+        by_volume
+            .entry(id.volume().as_number())
+            .or_default()
+            .push(id);
+    }
+    let mut best = None;
+    for (number, ids) in by_volume {
+        let Some((stamp, ids)) = generation(ids, |_| true) else {
+            continue;
+        };
+        match &best {
+            Some((best_stamp, _, _)) if stamp <= *best_stamp => {}
+            _ => best = Some((stamp, VolumeIndex::new(number), ids)),
+        }
+    }
+    best.map(|(stamp, volume, ids)| (volume, stamp, ids))
 }
 
 /// The delimiter rolls all keys in a volume up to one `CommonPrefixes` item,
@@ -107,63 +139,40 @@ async fn occupied_volumes(site: &str) -> std::result::Result<Vec<VolumeIndex>, S
     parse_volumes(&body, site)
 }
 
-/// Search occupied directories by each one's *newest* scan time. The
-/// upstream iterator samples its first listed object's upload time; when a
-/// directory contains old and new generations that sample can land many
-/// hours behind live. Sorting occupied directory numbers preserves the ring
-/// order without treating expired directories as search positions.
+/// The newest dated generation on the station, with its chunks in order.
+/// Occupied directories are listed once, then each is probed for its
+/// newest name timestamp. That is one listing per directory, not one per
+/// leftover key, so a leftover-heavy station still finishes.
 pub async fn latest(
     site: &str,
 ) -> std::result::Result<Option<(VolumeIndex, NaiveDateTime, Vec<ChunkIdentifier>)>, String> {
     let volumes = occupied_volumes(site).await?;
-    let index = search(volumes.len(), |index| {
-        let volume = volumes[index];
-        async move {
-            generation(list(site, volume).await.map_err(|e| e.to_string())?, |_| {
-                true
-            })
-            .map(|(stamp, _)| stamp)
-            .ok_or_else(|| format!("volume {} emptied during discovery", volume.as_number()))
-        }
-    })
-    .await?;
-    let Some(index) = index else { return Ok(None) };
-    let volume = volumes[index];
-    Ok(
-        generation(list(site, volume).await.map_err(|e| e.to_string())?, |_| {
-            true
-        })
-        .map(|(stamp, ids)| (volume, stamp, ids)),
-    )
-}
-
-/// In occupied-directory order, scan times increase until the ring wraps
-/// back to old retained data. Comparing each midpoint with the first time
-/// locates the last directory before that wrap.
-async fn search<F, V, E>(
-    count: usize,
-    mut probe: impl FnMut(usize) -> F,
-) -> std::result::Result<Option<usize>, E>
-where
-    F: Future<Output = std::result::Result<V, E>>,
-    V: PartialOrd,
-{
-    if count == 0 {
+    if volumes.is_empty() {
         return Ok(None);
     }
-    let first = probe(0).await?;
-    let mut low = 0;
-    let mut high = count;
-    while low < high {
-        let mid = low + (high - low) / 2;
-        let value = probe(mid).await?;
-        if value >= first {
-            low = mid + 1;
-        } else {
-            high = mid;
+    let site = site.to_owned();
+    let sem = Arc::new(Semaphore::new(PROBE_CAP));
+    let mut set = JoinSet::new();
+    for volume in volumes {
+        let site = site.clone();
+        let sem = sem.clone();
+        set.spawn(async move {
+            let _permit = sem.acquire_owned().await.ok()?;
+            let ids = list(&site, volume).await.ok()?;
+            generation(ids, |_| true).map(|(stamp, ids)| (stamp, volume, ids))
+        });
+    }
+    let mut best = None;
+    while let Some(joined) = set.join_next().await {
+        let Some((stamp, volume, ids)) = joined.ok().flatten() else {
+            continue;
+        };
+        match &best {
+            Some((best_stamp, _, _)) if stamp <= *best_stamp => {}
+            _ => best = Some((stamp, volume, ids)),
         }
     }
-    Ok(Some(low - 1))
+    Ok(best.map(|(stamp, volume, ids)| (volume, stamp, ids)))
 }
 
 #[cfg(test)]
@@ -182,6 +191,34 @@ mod tests {
     fn id(volume: usize, day: u32, hour: u32, sequence: usize) -> ChunkIdentifier {
         let name = format!("202609{day:02}-{hour:02}0000-{sequence:03}-I");
         ChunkIdentifier::from_name("KJAX".into(), VolumeIndex::new(volume), name, None).unwrap()
+    }
+
+    /// The previous join search: occupied-directory order, times increase
+    /// until one wrap. Leftover directories in the middle break it.
+    async fn ring_search<F, V, E>(
+        count: usize,
+        mut probe: impl FnMut(usize) -> F,
+    ) -> std::result::Result<Option<usize>, E>
+    where
+        F: std::future::Future<Output = std::result::Result<V, E>>,
+        V: PartialOrd,
+    {
+        if count == 0 {
+            return Ok(None);
+        }
+        let first = probe(0).await?;
+        let mut low = 0;
+        let mut high = count;
+        while low < high {
+            let mid = low + (high - low) / 2;
+            let value = probe(mid).await?;
+            if value >= first {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        Ok(Some(low - 1))
     }
 
     #[test]
@@ -203,6 +240,63 @@ mod tests {
     }
 
     #[test]
+    fn leftover_directories_inside_the_cycle_lose_to_the_newest_stamp() {
+        let chunks = vec![
+            id(1, 1, 5, 1),
+            id(2, 12, 17, 1),
+            id(2, 12, 17, 2),
+            id(3, 2, 8, 1),
+            id(4, 3, 8, 1),
+        ];
+        let stamps = [stamp(1, 5), stamp(12, 17), stamp(2, 8), stamp(3, 8)];
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let found = ring_search(
+                    stamps.len(),
+                    |index| async move { Ok::<_, ()>(stamps[index]) },
+                )
+                .await
+                .unwrap();
+                assert_eq!(found, Some(3), "the old search picks the leftover at 4");
+            });
+        let (volume, time, ids) = latest_from_chunks(chunks).unwrap();
+        assert_eq!(volume.as_number(), 2);
+        assert_eq!(time, stamp(12, 17));
+        assert_eq!(
+            ids.iter()
+                .map(ChunkIdentifier::sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn newest_stamp_wins_on_a_sparse_ring_and_a_wrap() {
+        let chunks = vec![
+            id(1, 12, 1, 1),
+            id(68, 12, 18, 1),
+            id(69, 9, 5, 1),
+            id(76, 9, 6, 1),
+            id(999, 12, 0, 1),
+        ];
+        let (volume, time, _) = latest_from_chunks(chunks).unwrap();
+        assert_eq!(volume.as_number(), 68);
+        assert_eq!(time, stamp(12, 18));
+
+        let wrapped = vec![
+            id(1, 12, 20, 1),
+            id(2, 12, 22, 1),
+            id(200, 11, 4, 1),
+            id(999, 12, 16, 1),
+        ];
+        let (volume, time, _) = latest_from_chunks(wrapped).unwrap();
+        assert_eq!(volume.as_number(), 2);
+        assert_eq!(time, stamp(12, 22));
+    }
+
+    #[test]
     fn volume_listing_omits_expired_directories_and_rejects_truncation() {
         let body = r#"<ListBucketResult><Prefix>KFCX/</Prefix><IsTruncated>false</IsTruncated>
             <CommonPrefixes><Prefix>KFCX/999/</Prefix></CommonPrefixes>
@@ -219,70 +313,5 @@ mod tests {
             vec![1, 69, 999]
         );
         assert!(parse_volumes(&body.replace("false", "true"), "KFCX").is_err());
-    }
-
-    #[test]
-    fn sparse_ring_finds_live_volume_before_expired_hole() {
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap()
-            .block_on(async {
-                // KFCX's live branch ended at 68. Volume 69 still held a
-                // September 9 generation, 70..75 had expired, and 999 held
-                // a scan from earlier today. Search only occupied positions.
-                let occupied = [
-                    (1, 120_001),
-                    (68, 120_068),
-                    (69, 90_069),
-                    (76, 90_076),
-                    (999, 119_999),
-                ];
-                let found = search(occupied.len(), |index| async move {
-                    Ok::<_, ()>(occupied[index].1)
-                })
-                .await
-                .unwrap();
-                assert_eq!(found.map(|index| occupied[index].0), Some(68));
-
-                // With hundreds of occupied directories, the old search
-                // returned the first old volume after the wrap (83), not 81.
-                let occupied = (1..=81)
-                    .map(|number| (number, 120_000 + number))
-                    .chain((83..=838).map(|number| (number, 90_000 + number)))
-                    .chain([(999, 119_999)])
-                    .collect::<Vec<_>>();
-                let found = search(occupied.len(), |index| {
-                    let stamp = occupied[index].1;
-                    async move { Ok::<_, ()>(stamp) }
-                })
-                .await
-                .unwrap();
-                assert_eq!(found.map(|index| occupied[index].0), Some(81));
-            });
-    }
-
-    #[test]
-    fn search_finds_today_before_old_cycle_even_with_reused_folders() {
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap()
-            .block_on(async {
-                // Current scans have wrapped to volumes 1..130; 131..999 retain the
-                // previous cycle. Volume 999 must be included in the search.
-                let found = search(999, |index| async move {
-                    Ok::<_, ()>(if index < 130 {
-                        10_000 + index as i32
-                    } else {
-                        index as i32
-                    })
-                })
-                .await
-                .unwrap();
-                assert_eq!(found, Some(129));
-                let found = search(999, |index| async move { Ok::<_, ()>(index as i32) })
-                    .await
-                    .unwrap();
-                assert_eq!(found, Some(998));
-            });
     }
 }

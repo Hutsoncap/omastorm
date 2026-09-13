@@ -152,7 +152,8 @@ configuration.
 A product is a texture, legend, units, timestamp, and source from the engine.
 Level II is what is drawn.
 
-The live poller follows the latest dated volume generation. Empty polls are
+The live poller joins the newest dated volume generation among occupied
+directories, not the last folder before a 1–999 wrap. Empty polls are
 normal between chunks, but 90 seconds without a recent chunk restarts
 discovery. Old keys left in a reused volume directory are ignored.
 Independently, if the poller task has exited, or the newest radial is thirty
