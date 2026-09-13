@@ -153,9 +153,9 @@ A product is a texture, legend, units, timestamp, and source from the engine.
 Level II is what is drawn.
 
 The live poller joins the newest dated volume generation among occupied
-directories, not the last folder before a 1–999 wrap. Join stops listing
-leftover directories once a name timestamp from the last minute is in
-hand. Empty polls are
+directories, not the last folder before a 1–999 wrap. Join lists only
+recent keys, spreads the first probes across the ring, and stops once a
+name timestamp from the last minute is in hand. Empty polls are
 normal between chunks, but 90 seconds without a recent chunk restarts
 discovery. Old keys left in a reused volume directory are ignored.
 Independently, if the poller task has exited, or the newest radial is thirty

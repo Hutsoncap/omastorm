@@ -25,6 +25,10 @@ const PROBE_CAP: usize = 64;
 const LIVE_AGE: TimeDelta = TimeDelta::seconds(90);
 /// Accept a name a few seconds ahead of the local clock.
 const CLOCK_SKEW: TimeDelta = TimeDelta::seconds(30);
+/// Probes ignore keys older than this. Leftover-only directories come back
+/// empty instead of listing a thousand stale objects. A station silent
+/// longer than this reports no volume, which matches unavailable.
+const RECENT: TimeDelta = TimeDelta::hours(3);
 
 /// True when `stamp` is the live scan: no older than `LIVE_AGE`, and not
 /// far in the future.
@@ -139,6 +143,88 @@ fn parse_volumes(body: &str, site: &str) -> std::result::Result<Vec<VolumeIndex>
     Ok(volumes)
 }
 
+fn gcd(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
+/// Visit every occupied directory, but spread the first wave across the
+/// ring so today's cluster is not sitting behind folder 1.
+fn spread_ring(volumes: Vec<VolumeIndex>) -> Vec<VolumeIndex> {
+    let n = volumes.len();
+    if n < 2 {
+        return volumes;
+    }
+    let mut stride = (n / PROBE_CAP).max(1);
+    while gcd(stride, n) != 1 {
+        stride += 1;
+        if stride >= n {
+            return volumes;
+        }
+    }
+    // Start at `stride`, not 0, so folder 1 is not the first probe.
+    (0..n).map(|i| volumes[((i + 1) * stride) % n]).collect()
+}
+
+fn parse_chunk_keys(
+    body: &str,
+    site: &str,
+    volume: VolumeIndex,
+) -> std::result::Result<Vec<ChunkIdentifier>, String> {
+    let mut ids = Vec::new();
+    let mut in_key = false;
+    let mut key = None::<String>;
+    for event in EventReader::new(body.as_bytes()) {
+        match event.map_err(|e| format!("reading chunk listing: {e}"))? {
+            XmlEvent::StartElement { name, .. } if name.local_name == "Key" => {
+                in_key = true;
+                key = Some(String::new());
+            }
+            XmlEvent::Characters(value) if in_key => {
+                if let Some(key) = key.as_mut() {
+                    key.push_str(&value);
+                }
+            }
+            XmlEvent::EndElement { name } if name.local_name == "Key" => {
+                in_key = false;
+                if let Some(value) = key.take() {
+                    let name = value.rsplit('/').next().unwrap_or(&value);
+                    if let Ok(id) =
+                        ChunkIdentifier::from_name(site.to_owned(), volume, name.to_owned(), None)
+                    {
+                        ids.push(id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(ids)
+}
+
+async fn list_after(
+    site: &str,
+    volume: VolumeIndex,
+    after: NaiveDateTime,
+) -> std::result::Result<Vec<ChunkIdentifier>, String> {
+    let prefix = format!("{}/{}/", site, volume.as_number());
+    let start = format!("{prefix}{}", after.format("%Y%m%d-%H%M%S"));
+    let url = format!(
+        "https://unidata-nexrad-level2-chunks.s3.amazonaws.com?list-type=2&prefix={prefix}&start-after={start}&max-keys={LIST_LIMIT}"
+    );
+    let body = reqwest::get(url)
+        .await
+        .map_err(|e| format!("listing volume {}: {e}", volume.as_number()))?
+        .error_for_status()
+        .map_err(|e| format!("listing volume {}: {e}", volume.as_number()))?
+        .text()
+        .await
+        .map_err(|e| format!("reading volume {}: {e}", volume.as_number()))?;
+    parse_chunk_keys(&body, site, volume)
+}
+
 async fn occupied_volumes(site: &str) -> std::result::Result<Vec<VolumeIndex>, String> {
     let url = format!(
         "https://unidata-nexrad-level2-chunks.s3.amazonaws.com?list-type=2&prefix={site}/&delimiter=/&max-keys=1000"
@@ -155,11 +241,11 @@ async fn occupied_volumes(site: &str) -> std::result::Result<Vec<VolumeIndex>, S
 }
 
 /// The newest dated generation on the station, with its chunks in order.
-/// Occupied directories are listed once, then each is probed for its
-/// newest name timestamp. That is one listing per directory, not one per
-/// leftover key. Probes stop once a live stamp is in hand: leftover
-/// directories cannot be newer, and backfill still walks earlier volumes
-/// after join.
+/// Occupied directories are listed once, then each is probed for keys
+/// newer than `RECENT`. That skips leftover-only directories. The first
+/// wave is spread across the ring so today's volume is not behind folder
+/// 1. Probes stop once a live stamp is in hand. Backfill still walks
+/// earlier volumes after join.
 pub async fn latest(
     site: &str,
 ) -> std::result::Result<Option<(VolumeIndex, NaiveDateTime, Vec<ChunkIdentifier>)>, String> {
@@ -168,15 +254,16 @@ pub async fn latest(
         return Ok(None);
     }
     let now = Utc::now().naive_utc();
+    let after = now - RECENT;
     let site = site.to_owned();
     let sem = Arc::new(Semaphore::new(PROBE_CAP));
     let mut set = JoinSet::new();
-    for volume in volumes {
+    for volume in spread_ring(volumes) {
         let site = site.clone();
         let sem = sem.clone();
         set.spawn(async move {
             let _permit = sem.acquire_owned().await.ok()?;
-            let ids = list(&site, volume).await.ok()?;
+            let ids = list_after(&site, volume, after).await.ok()?;
             generation(ids, |_| true).map(|(stamp, ids)| (stamp, volume, ids))
         });
     }
@@ -338,6 +425,39 @@ mod tests {
             vec![1, 69, 999]
         );
         assert!(parse_volumes(&body.replace("false", "true"), "KFCX").is_err());
+    }
+
+    #[test]
+    fn spread_ring_visits_every_directory_and_leaves_the_first_wave_off_folder_one() {
+        let volumes: Vec<_> = (1..=20).map(VolumeIndex::new).collect();
+        let spread = spread_ring(volumes);
+        let mut seen: Vec<_> = spread.iter().map(VolumeIndex::as_number).collect();
+        assert_eq!(seen.len(), 20);
+        seen.sort_unstable();
+        assert_eq!(seen, (1..=20).collect::<Vec<_>>());
+        assert_ne!(
+            spread[0].as_number(),
+            1,
+            "the first probe must not always be folder 1"
+        );
+    }
+
+    #[test]
+    fn chunk_listing_keeps_only_keys_in_the_volume() {
+        let body = r#"<ListBucketResult>
+            <Contents><Key>KFCX/305/20260913-111000-001-S</Key></Contents>
+            <Contents><Key>KFCX/305/20260913-141335-001-S</Key></Contents>
+            <Contents><Key>KFCX/305/20260913-141335-002-I</Key></Contents>
+            </ListBucketResult>"#;
+        let ids = parse_chunk_keys(body, "KFCX", VolumeIndex::new(305)).unwrap();
+        assert_eq!(
+            ids.iter().map(ChunkIdentifier::name).collect::<Vec<_>>(),
+            vec![
+                "20260913-111000-001-S",
+                "20260913-141335-001-S",
+                "20260913-141335-002-I"
+            ]
+        );
     }
 
     #[test]
