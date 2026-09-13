@@ -9,7 +9,7 @@
 use chrono::{NaiveDateTime, TimeDelta, Utc};
 use nexrad_data::aws::realtime::{ChunkIdentifier, VolumeIndex, list_chunks_in_volume};
 use nexrad_data::result::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -29,6 +29,9 @@ const CLOCK_SKEW: TimeDelta = TimeDelta::seconds(30);
 /// empty instead of listing a thousand stale objects. A station silent
 /// longer than this reports no volume, which matches unavailable.
 const RECENT: TimeDelta = TimeDelta::hours(3);
+/// Once any recent volume is found, only these neighbors are checked for a
+/// newer one. That is the current cycle, not 900 leftover folders.
+const CLUSTER_RADIUS: usize = 48;
 
 /// True when `stamp` is the live scan: no older than `LIVE_AGE`, and not
 /// far in the future.
@@ -168,6 +171,61 @@ fn spread_ring(volumes: Vec<VolumeIndex>) -> Vec<VolumeIndex> {
     (0..n).map(|i| volumes[((i + 1) * stride) % n]).collect()
 }
 
+fn neighbor_volumes(occupied: &HashSet<usize>, center: usize, radius: usize) -> Vec<VolumeIndex> {
+    let mut out = Vec::new();
+    for d in -(radius as i32)..=radius as i32 {
+        let mut n = center as i32 + d;
+        if n < 1 {
+            n += 999;
+        } else if n > 999 {
+            n -= 999;
+        }
+        let n = n as usize;
+        if occupied.contains(&n) {
+            out.push(VolumeIndex::new(n));
+        }
+    }
+    out
+}
+
+type Found = (NaiveDateTime, VolumeIndex, Vec<ChunkIdentifier>);
+
+fn keep_newest(best: &mut Option<Found>, got: Found) {
+    match best {
+        Some((stamp, _, _)) if got.0 <= *stamp => {}
+        _ => *best = Some(got),
+    }
+}
+
+async fn probe_volumes(
+    site: &str,
+    volumes: Vec<VolumeIndex>,
+    after: NaiveDateTime,
+) -> Option<Found> {
+    if volumes.is_empty() {
+        return None;
+    }
+    let sem = Arc::new(Semaphore::new(PROBE_CAP));
+    let mut set = JoinSet::new();
+    let site = site.to_owned();
+    for volume in volumes {
+        let site = site.clone();
+        let sem = sem.clone();
+        set.spawn(async move {
+            let _permit = sem.acquire_owned().await.ok()?;
+            let ids = list_after(&site, volume, after).await.ok()?;
+            generation(ids, |_| true).map(|(stamp, ids)| (stamp, volume, ids))
+        });
+    }
+    let mut best = None;
+    while let Some(joined) = set.join_next().await {
+        if let Some(got) = joined.ok().flatten() {
+            keep_newest(&mut best, got);
+        }
+    }
+    best
+}
+
 fn parse_chunk_keys(
     body: &str,
     site: &str,
@@ -241,11 +299,9 @@ async fn occupied_volumes(site: &str) -> std::result::Result<Vec<VolumeIndex>, S
 }
 
 /// The newest dated generation on the station, with its chunks in order.
-/// Occupied directories are listed once, then each is probed for keys
-/// newer than `RECENT`. That skips leftover-only directories. The first
-/// wave is spread across the ring so today's volume is not behind folder
-/// 1. Probes stop once a live stamp is in hand. Backfill still walks
-/// earlier volumes after join.
+/// Occupied directories are listed once. One spread wave looks for any
+/// recent name; neighbors of that hit are the current cycle. Leftover
+/// folders are not listed. Backfill still walks earlier volumes after join.
 pub async fn latest(
     site: &str,
 ) -> std::result::Result<Option<(VolumeIndex, NaiveDateTime, Vec<ChunkIdentifier>)>, String> {
@@ -255,34 +311,33 @@ pub async fn latest(
     }
     let now = Utc::now().naive_utc();
     let after = now - RECENT;
-    let site = site.to_owned();
-    let sem = Arc::new(Semaphore::new(PROBE_CAP));
-    let mut set = JoinSet::new();
-    for volume in spread_ring(volumes) {
-        let site = site.clone();
-        let sem = sem.clone();
-        set.spawn(async move {
-            let _permit = sem.acquire_owned().await.ok()?;
-            let ids = list_after(&site, volume, after).await.ok()?;
-            generation(ids, |_| true).map(|(stamp, ids)| (stamp, volume, ids))
-        });
+    let occupied: HashSet<usize> = volumes.iter().map(VolumeIndex::as_number).collect();
+    let ordered = spread_ring(volumes);
+    let first: Vec<_> = ordered.iter().copied().take(PROBE_CAP).collect();
+    let rest: Vec<_> = ordered.iter().copied().skip(PROBE_CAP).collect();
+    let mut best = probe_volumes(site, first, after).await;
+    if best
+        .as_ref()
+        .is_some_and(|(stamp, _, _)| stamp_is_live(*stamp, now))
+    {
+        return Ok(best.map(|(stamp, volume, ids)| (volume, stamp, ids)));
     }
-    let mut best = None;
-    while let Some(joined) = set.join_next().await {
-        let Some((stamp, volume, ids)) = joined.ok().flatten() else {
-            continue;
-        };
-        match &best {
-            Some((best_stamp, _, _)) if stamp <= *best_stamp => {}
-            _ => best = Some((stamp, volume, ids)),
-        }
-        if best
-            .as_ref()
-            .is_some_and(|(stamp, _, _)| stamp_is_live(*stamp, now))
+    if let Some((stamp, volume, _)) = &best
+        && now - *stamp <= RECENT
+    {
+        if let Some(got) = probe_volumes(
+            site,
+            neighbor_volumes(&occupied, volume.as_number(), CLUSTER_RADIUS),
+            after,
+        )
+        .await
         {
-            set.abort_all();
-            break;
+            keep_newest(&mut best, got);
         }
+        return Ok(best.map(|(stamp, volume, ids)| (volume, stamp, ids)));
+    }
+    if let Some(got) = probe_volumes(site, rest, after).await {
+        keep_newest(&mut best, got);
     }
     Ok(best.map(|(stamp, volume, ids)| (volume, stamp, ids)))
 }
@@ -425,6 +480,15 @@ mod tests {
             vec![1, 69, 999]
         );
         assert!(parse_volumes(&body.replace("false", "true"), "KFCX").is_err());
+    }
+
+    #[test]
+    fn neighbors_wrap_around_the_ring() {
+        let occupied: HashSet<usize> = [1, 2, 998, 999].into_iter().collect();
+        let near = neighbor_volumes(&occupied, 1, 2);
+        let nums: Vec<_> = near.iter().map(VolumeIndex::as_number).collect();
+        assert!(nums.contains(&1) && nums.contains(&2));
+        assert!(nums.contains(&998) && nums.contains(&999));
     }
 
     #[test]
