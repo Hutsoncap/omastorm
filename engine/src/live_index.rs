@@ -12,6 +12,7 @@ use nexrad_data::result::Result;
 use nexrad_data::result::aws::AWSError;
 use nexrad_data::volume::File;
 use std::future::Future;
+use std::sync::LazyLock;
 use xml::reader::{EventReader, XmlEvent};
 
 pub const LIST_LIMIT: usize = 1000;
@@ -63,12 +64,15 @@ pub fn generation(
     Some((stamp, selected))
 }
 
-pub(crate) fn http_client() -> reqwest::Client {
-    let mut builder = reqwest::Client::builder();
-    if cfg!(test) {
-        builder = builder.no_proxy();
-    }
-    builder.build().expect("HTTP client")
+pub(crate) fn http_client() -> &'static reqwest::Client {
+    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+        let mut builder = reqwest::Client::builder();
+        if cfg!(test) {
+            builder = builder.no_proxy();
+        }
+        builder.build().expect("HTTP client")
+    });
+    &CLIENT
 }
 
 /// Stream `response` up to `max` bytes. Reject before retaining overflow.
