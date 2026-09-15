@@ -3,13 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Omastorm</title>
-<meta name="description" content="Live NEXRAD radar for the Omarchy desktop. Every site, a scrubbable timeline, three treatments, your theme. Beta.">
+<title>Omastorm: live NEXRAD radar for Omarchy</title>
+<meta name="description" content="Live NEXRAD weather radar in your Omarchy bar. Search cities, radar sites, or coordinates, play a two-hour loop, and follow the weather in your theme. Beta.">
 <meta name="color-scheme" content="dark light">
-<meta property="og:title" content="Omastorm">
-<meta property="og:description" content="Live NEXRAD radar for the Omarchy desktop. Beta.">
-<meta property="og:image" content="https://omastorm.com/take-poster.png">
+<meta property="og:title" content="Omastorm: live NEXRAD radar for Omarchy">
+<meta property="og:description" content="Live NEXRAD weather radar in your Omarchy bar. A two-hour loop, three treatments, and your theme. Beta.">
+<meta property="og:image" content="https://omastorm.com/media/hero.png">
 <meta property="og:url" content="https://omastorm.com/">
+<meta property="og:type" content="website">
+<link rel="canonical" href="https://omastorm.com/">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="mark.svg" type="image/svg+xml">
 <link rel="icon" href="mark-32.png" sizes="32x32" type="image/png">
@@ -17,11 +19,27 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Omastorm",
+  "url": "https://omastorm.com/",
+  "description": "Live NEXRAD weather radar in the Omarchy bar, with a two-hour loop, location search, and three radar treatments.",
+  "applicationCategory": "WeatherApplication",
+  "operatingSystem": "Linux (Omarchy 4)",
+  "softwareRequirements": "Omarchy 4 on x86_64 or aarch64",
+  "license": "https://github.com/wesleygrimes/omastorm/blob/main/LICENSE",
+  "downloadUrl": "https://github.com/wesleygrimes/omastorm",
+  "screenshot": "https://omastorm.com/media/hero.png",
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+}
+</script>
 <style>
   :root {
     --bg: #1a1b26;
     --fg: #a9b1d6;
-    --dim: #565f89;
+    --dim: #939dbc;
     --line: #2f3349;
     --accent: #7aa2f7;
     --well: #16161e;
@@ -30,7 +48,7 @@
     :root {
       --bg: #f5f1e8;
       --fg: #343a48;
-      --dim: #7a8194;
+      --dim: #62697a;
       --line: #d9d3c6;
       --accent: #365ba8;
       --well: #ebe6da;
@@ -81,13 +99,12 @@
     background: #1a1b26;
     line-height: 0;
   }
-  .frame video, .frame img {
+  .frame img {
     display: block;
     width: 100%;
     height: auto;
     background: #1a1b26;
   }
-  .frame video { aspect-ratio: 13 / 9; }
   .frame.shot img { width: min(100%, 520px); margin: 0 auto; }
   figure.shots .frame { display: flex; justify-content: center; background: var(--well); }
   figcaption {
@@ -100,24 +117,6 @@
     font-size: 11px;
     letter-spacing: 0.04em;
   }
-  .lede {
-    max-width: 62ch;
-    margin: 28px 0 0;
-    font-size: clamp(16px, 2.2vw, 22px);
-    line-height: 1.45;
-  }
-  .lede b { color: var(--fg); font-weight: 700; }
-  .lede .cursor {
-    display: inline-block;
-    width: 0.55em;
-    height: 1em;
-    vertical-align: -0.15em;
-    margin-left: 0.15em;
-    background: var(--accent);
-    animation: blink 1.1s steps(1) infinite;
-  }
-  @keyframes blink { 50% { opacity: 0; } }
-  @media (prefers-reduced-motion: reduce) { .lede .cursor { animation: none; } }
   .points {
     margin: 18px 0 0;
     padding: 0;
@@ -127,8 +126,37 @@
     gap: 6px 32px;
     color: var(--dim);
   }
-  .points li::before { content: "▪ "; color: var(--accent); }
+  .points li::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 8px; vertical-align: .15em; background: var(--accent); }
   .points li b { color: var(--fg); font-weight: 400; }
+
+  h1 { font-size: clamp(28px, 4.6vw, 54px); line-height: 1.15; letter-spacing: -0.05em; max-width: 22ch; margin: 34px 0 16px; }
+  h2 { font-size: 18px; margin: 0; }
+  h3 { font-size: 14px; margin: 0 0 8px; }
+  p { max-width: 78ch; }
+  p code { overflow-wrap: anywhere; }
+  .intro { max-width: 74ch; font-size: 15px; }
+  .links { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 20px 0 26px; }
+  .guide { margin-top: 36px; display: grid; gap: 18px; }
+  .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+  .cards p { margin: 0; }
+  .theme-showcase { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  @media (max-width: 760px) { .theme-showcase { grid-template-columns: 1fr; } }
+  .gallery img { display: block; width: 100%; height: auto; border: 1px solid var(--line); }
+  kbd { font: inherit; color: var(--accent); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+  .cmd pre { min-width: 0; }
+  @media (max-width: 640px) {
+    .cards { grid-template-columns: 1fr; }
+    .steps { grid-template-columns: 1fr; }
+    .install .row { flex-wrap: wrap; }
+  }
+
+  .sponsor { margin: 48px 0 16px; padding: clamp(24px, 5vw, 56px); border: 1px solid var(--line); background: var(--well); position: relative; }
+  .sponsor h2 { font-size: clamp(28px, 4vw, 42px); line-height: 1.2; max-width: 22ch; letter-spacing: -0.03em; }
+  .sponsor p { max-width: 60ch; }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: .12em; font-size: 12px; font-weight: 700; margin: 0 0 16px; }
+  .sponsor-link { display: inline-flex; align-items: center; gap: 10px; background: var(--accent); color: var(--bg); padding: 12px 20px; border-radius: 6px; font-weight: 650; margin: 8px 0 16px; }
+  .sponsor-link svg { width: 19px; height: 19px; flex: none; }
 
   /* Install */
   section.install { margin-top: 36px; display: flex; flex-direction: column; gap: 14px; }
@@ -165,7 +193,7 @@
     padding: 0 16px;
     cursor: pointer;
   }
-  .cmd button:hover, .cmd button:focus-visible { color: var(--accent); outline: none; }
+  .cmd button:hover, .cmd button:focus-visible { color: var(--accent); }
   .cmd button[data-done] { color: var(--accent); }
   .steps {
     margin: 0;
@@ -216,62 +244,49 @@
     .row .right.sub { display: none; }
     .cmd pre { font-size: 12px; }
   }
+  /* Hide the montage's baked-in label strip; use the page font for labels. */
+  .treatment-views { aspect-ratio: 996 / 245; overflow: hidden; }
+  .treatment-views img { border: 0; }
+  .treatment-labels { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; padding: 10px 0; color: var(--fg); font-size: 14px; }
 </style>
 </head>
 <body>
 <main>
   <div class="row">
     <a class="mark" href="/"><svg class="glyph" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor"><path fill-opacity="0.35" d="M0 1h1v1h-1zM0 2h1v1h-1zM0 3h1v1h-1zM0 4h1v1h-1zM0 5h1v1h-1zM0 6h1v1h-1zM0 7h1v1h-1zM0 8h1v1h-1zM0 9h1v1h-1zM0 10h1v1h-1zM0 11h1v1h-1zM0 12h1v1h-1zM0 13h1v1h-1zM0 14h1v1h-1zM1 0h1v1h-1zM1 15h1v1h-1zM2 0h1v1h-1zM2 15h1v1h-1zM3 0h1v1h-1zM3 15h1v1h-1zM4 0h1v1h-1zM4 15h1v1h-1zM5 0h1v1h-1zM5 15h1v1h-1zM6 0h1v1h-1zM6 15h1v1h-1zM7 0h1v1h-1zM7 15h1v1h-1zM8 0h1v1h-1zM8 15h1v1h-1zM9 0h1v1h-1zM9 15h1v1h-1zM10 0h1v1h-1zM10 15h1v1h-1zM11 0h1v1h-1zM11 15h1v1h-1zM12 0h1v1h-1zM12 15h1v1h-1zM13 0h1v1h-1zM13 15h1v1h-1zM14 0h1v1h-1zM14 15h1v1h-1zM15 1h1v1h-1zM15 2h1v1h-1zM15 3h1v1h-1zM15 4h1v1h-1zM15 5h1v1h-1zM15 6h1v1h-1zM15 7h1v1h-1zM15 8h1v1h-1zM15 9h1v1h-1zM15 10h1v1h-1zM15 11h1v1h-1zM15 12h1v1h-1zM15 13h1v1h-1zM15 14h1v1h-1z"/><path fill-opacity="0.5" d="M3 5h1v1h-1zM3 6h1v1h-1zM3 7h1v1h-1zM3 8h1v1h-1zM3 9h1v1h-1zM3 10h1v1h-1zM4 4h1v1h-1zM4 11h1v1h-1zM5 3h1v1h-1zM5 12h1v1h-1zM6 3h1v1h-1zM6 12h1v1h-1zM7 3h1v1h-1zM7 12h1v1h-1zM8 3h1v1h-1zM8 12h1v1h-1zM9 3h1v1h-1zM9 12h1v1h-1zM10 3h1v1h-1zM10 12h1v1h-1zM11 11h1v1h-1zM12 5h1v1h-1zM12 6h1v1h-1zM12 7h1v1h-1zM12 8h1v1h-1zM12 9h1v1h-1zM12 10h1v1h-1z"/><path fill-opacity="0.55" d="M5 9h1v1h-1zM6 8h1v1h-1zM6 10h1v1h-1zM7 9h1v1h-1zM12 2h1v1h-1zM13 1h1v1h-1zM13 3h1v1h-1zM14 2h1v1h-1z"/><path fill-opacity="0.8" d="M8 6h1v1h-1zM9 7h1v1h-1zM10 4h1v1h-1zM11 3h1v1h-1zM11 5h1v1h-1zM12 3h1v1h-1zM12 4h1v1h-1z"/><path fill-opacity="0.95" d="M7 7h1v1h-1zM7 8h1v1h-1zM8 7h1v1h-1zM8 8h1v1h-1z"/><path fill-opacity="1.0" d="M9 5h1v1h-1zM9 6h1v1h-1zM10 5h1v1h-1zM10 6h1v1h-1zM11 4h1v1h-1z"/></svg>OMASTORM</a>
-    <span class="right tag"><a href="https://github.com/wesleygrimes/omastorm/releases/tag/v0.1.12">Beta 0.1.12</a></span>
+    <span class="right tag"><a href="https://github.com/wesleygrimes/omastorm/releases">Beta · Releases</a></span>
   </div>
   <div class="rule"></div>
-  <div class="row">
-    <span><b>KJAX</b> <span style="color:var(--dim)">Jacksonville</span></span>
-    <span class="right sub">Reflectivity / 0.5° / Live</span>
+  <header>
+    <h1>Live NEXRAD radar in your Omarchy bar.</h1>
+    <p class="intro">A radar that lives next to the clock. Open the popover for the nearest station and the actual scan time. Expand to the full window for the sweep at native resolution, a two-hour loop, and every dish in the network—drawn in your Omarchy theme.</p>
+    <nav class="links" aria-label="Get started">
+      <a href="#install">Install Omastorm</a>
+      <a href="https://github.com/wesleygrimes/omastorm">View on GitHub</a>
+      <a href="https://github.com/wesleygrimes/omastorm#readme">Read the user guide</a>
+    </nav>
+  </header>
+  <div class="theme-showcase" aria-label="Omastorm in dark and light themes">
+    <figure class="gallery">
+      <img src="media/window.png" width="640" height="480" alt="Omastorm radar window in the dark Tokyo Night theme." fetchpriority="high">
+      <figcaption><span>Dark mode</span><span>Tokyo Night</span></figcaption>
+    </figure>
+    <figure class="gallery">
+      <img src="media/window-light.png" width="640" height="480" alt="Omastorm radar window in the light Flexoki Light theme.">
+      <figcaption><span>Light mode</span><span>Flexoki Light</span></figcaption>
+    </figure>
   </div>
-
-  <figure>
-    <div class="frame">
-      <video id="take" autoplay muted loop playsinline preload="metadata"
-             poster="take-poster.png" width="1280" height="886"
-             aria-label="One live take of the Omastorm window: Jacksonville radar loop, station search to Tampa, keys sheet, and Glyphs / Pixels / Stipple treatments.">
-        <source src="take.mp4" type="video/mp4">
-      </video>
-    </div>
-    <figcaption>
-      <span>2026-09-10 · one live take · <a href="https://github.com/wesleygrimes/omastorm/releases/download/media-2026-09-10/omastorm-demo.mp4">full quality</a></span>
-      <span>Loop · station search · keys · Glyphs, Pixels, Stipple</span>
-    </figcaption>
-  </figure>
-
-  <figure class="shots">
-    <div class="frame shot">
-      <img src="popover.png" width="720" height="520" alt="Omastorm bar popover: Miami station, live radar, and timeline.">
-    </div>
-    <figcaption>
-      <span>Bar popover · home station · LIVE · expand to the window</span>
-      <span>Same map, timeline, and theme as the full window</span>
-    </figcaption>
-  </figure>
-
-
-  <p class="lede">
-    Live NEXRAD radar for the Omarchy desktop. Every site in the network, drawn from the
-    <b>measured data</b> in the monospace pixel language of the shell.<span class="cursor" aria-hidden="true"></span>
-  </p>
-
   <ul class="points">
-    <li><b>Live.</b> Sweeps paint as the antenna turns. Stale data says so.</li>
-    <li><b>Every site.</b> Pan and the map follows the nearest station, or search by id, city, or state.</li>
-    <li><b>Timeline.</b> The last 60 scans per station, cached. Play, step, scrub.</li>
-    <li><b>Native.</b> Colors, font, and spacing come from your Omarchy theme and change with it.</li>
-    <li><b>Keyboard first.</b> Every control is a keystroke, and every key is rebindable.</li>
-    <li><b>Honest.</b> Actual scan times. No forecasts, no mosaic, no vendor grid.</li>
+    <li><b>Live sweeps.</b> Radar paints as the antenna turns. Actual scan times and stale-data status stay visible.</li>
+    <li><b>Two-hour loop.</b> Up to 60 cached frames. Play, step, and scrub recent scans.</li>
+    <li><b>Find your place.</b> Search a city, a radar site, or pasted coordinates.</li>
+    <li><b>Your theme.</b> Chrome follows Omarchy. Radar color comes from the measured sweep.</li>
+    <li><b>Keyboard controls.</b> Pan, zoom, search, and play. Every key is rebindable.</li>
+    <li><b>NEXRAD coverage.</b> NOAA’s radar network. International radar networks are not supported yet.</li>
   </ul>
-
   <section class="install" id="install">
     <div class="row">
-      <span>Install</span>
+      <h2>Install</h2>
       <span class="right">Omarchy 4 · x86_64 · aarch64</span>
     </div>
     <div class="rule"></div>
@@ -280,37 +295,74 @@
       <button type="button" data-copy="install-cmd" aria-label="Copy the install command">Copy</button>
     </div>
     <ol class="steps">
-      <li><b>Pick a bar section</b> when asked. The mark appears in the bar; click it for the popover, the home station, and the actual scan time.</li>
-      <li><b>First open</b> fetches the pinned engine binary from GitHub Releases, checks its sha256, and keeps it under <code>~/.local/share/omastorm</code>. Nothing else leaves the plugin's own directories.</li>
-      <li><b>Click the map</b> (or press Enter) for the window: every site, the timeline, three treatments. Press <code>?</code> for the keys.</li>
+      <li><b>Pick a bar section</b> when asked. First open downloads the pinned engine from GitHub Releases, checks its sha256, and installs it under <code>~/.local/share/omastorm/bin</code>.</li>
+      <li><b>Choose your place.</b> Start at your Omarchy weather city if one is set. Otherwise, pick a place manually or choose approximate location. Your view is remembered.</li>
+      <li><b>Open the window.</b> Click the map or press Enter. Drag to pan, scroll to zoom, and press <code>?</code> for every key.</li>
     </ol>
     <div class="cmd">
       <pre><code id="bind-cmd"><span class="c">-- ~/.config/hypr/bindings.lua, optional: open the window from the keyboard</span>
 o.bind("SUPER + SHIFT + R", "Omastorm", "omarchy shell shell toggle com.omastorm.radar '{}'")</code></pre>
       <button type="button" data-copy="bind-cmd" aria-label="Copy the key binding">Copy</button>
     </div>
-    <p class="fine">
-      Update with <code>omarchy plugin update com.omastorm.radar</code>. The README covers
-      configuration, the key table, and removal. This is a beta; rough edges go to
-      <a href="https://github.com/wesleygrimes/omastorm/issues">GitHub issues</a>.
-    </p>
+    <p class="fine">Optional: <a href="https://github.com/wesleygrimes/omastorm#install">add Omastorm to your app launcher</a>. Configuration, remembered view, and cached scans stay in Omastorm’s own directories.</p>
+  </section>
+
+  <section class="guide" aria-labelledby="find-place">
+    <h2 id="find-place">Your place. Your radar.</h2>
+    <div class="cards">
+      <div><h3>One search field</h3><p>Press <kbd>/</kbd> or <kbd>s</kbd>. A city or coordinates centers the map and follows the nearest radar. A site ID such as <kbd>KTLX</kbd> locks that dish and centers on it.</p></div>
+      <div><h3>Follow or lock</h3><p>Pan to follow nearby stations, or use the padlock to pin one radar. Click the station name for nearby dishes. <kbd>n</kbd> selects the nearest radar without moving the camera.</p></div>
+    </div>
+    <figure class="gallery"><img src="media/search-city.png" width="640" height="480" alt="Search results for a city in the radar window." loading="lazy"><figcaption>Search cities, site IDs, or latitude and longitude in decimal degrees.</figcaption></figure>
+    <p class="fine">Approximate location is optional. On click, wttr.in estimates your city from the request’s public IP. There is no GPS or background tracking. A VPN can put the estimate in the wrong place; choose manually instead. Press <kbd>m</kbd> to locate again.</p>
+  </section>
+
+  <section class="guide" aria-labelledby="watch-loop">
+    <h2 id="watch-loop">Watch the weather move.</h2>
+    <p>Recent scans arrive within a few seconds of selecting a station. The cache grows toward 60 frames / two hours. <kbd>Space</kbd> plays or pauses, <kbd>[</kbd> and <kbd>]</kbd> step a frame, and <kbd>Home</kbd> / <kbd>End</kbd> jump to the oldest or newest.</p>
+  <figure class="gallery">
+    <img src="media/hero.png" alt="Omastorm’s full radar window beside its compact bar popover." width="1099" height="516">
+    <figcaption>Next to the clock, or room to explore. The popover expands with your view and playback intact.</figcaption>
+  </figure>
+    <p class="fine">The frame age tells you how stale the picture is; the timeline stamp tells you when the sweep was observed. The LIVE light turns yellow after ten minutes of stale data and red when the station or data bucket is unreachable. Cached frames stay available.</p>
+  </section>
+
+  <section class="guide" aria-labelledby="treatments">
+    <h2 id="treatments">One sweep. Three treatments.</h2>
+    <p><kbd>1</kbd> Pixels paints solid blocks. <kbd>2</kbd> Glyphs, the default, uses denser marks for stronger returns. <kbd>3</kbd> Stipple lets more map show through. All three sample the same radar data and palette.</p>
+    <figure class="gallery"><div class="treatment-views"><img src="media/treatments.png" width="996" height="279" alt="Pixels, Glyphs, and Stipple treatments of the same radar sweep." loading="lazy"></div><div class="treatment-labels" aria-hidden="true"><span>Pixels</span><span>Glyphs</span><span>Stipple</span></div><figcaption>Change the treatment without changing the measurement.</figcaption></figure>
+  </section>
+
+  <section class="guide" aria-labelledby="reading-radar">
+    <h2 id="reading-radar">What the colors mean</h2>
+    <p>Omastorm shows reflectivity on the lowest tilt of NOAA’s NEXRAD Level II scans. Color is <b>dBZ</b>: stronger returns get warmer colors. It is not a rain rate, a forecast, or the NWS warning stack. Returns can include rain and snow, birds and insects, ground clutter, and other objects.</p>
+    <p class="fine">Measured returns below 5 dBZ are hidden by default, as the legend indicates. Press <kbd>w</kbd> to show them. <a href="https://github.com/wesleygrimes/omastorm#what-you-are-looking-at">Learn to read the sweep</a></p>
+  </section>
+
+  <section class="guide" aria-labelledby="keep-current">
+    <h2 id="keep-current">Keep it current.</h2>
+    <div class="cmd"><pre><code id="update-cmd">omarchy plugin update com.omastorm.radar
+omarchy restart shell</code></pre><button type="button" data-copy="update-cmd" aria-label="Copy the update commands">Copy</button></div>
+    <p class="fine">Restart the shell to load the updated plugin and engine pin. Omastorm also shows an update notice in the popover; clicking it restarts the shell.</p>
+    <p>Set preferences in <code>~/.config/omastorm/config.toml</code>. Your last view is saved separately, so panning never rewrites your configuration.</p>
+    <nav class="links" aria-label="Help and contribute"><a href="https://github.com/wesleygrimes/omastorm#preferences">Preferences &amp; keys</a><a href="https://github.com/wesleygrimes/omastorm#if-something-is-wrong">Troubleshooting</a><a href="https://github.com/wesleygrimes/omastorm/issues/new?template=bug-report.md">Report a bug</a><a href="https://github.com/wesleygrimes/omastorm/blob/main/CONTRIBUTING.md">Contribute</a></nav>
+  </section>
+  <section class="sponsor" aria-labelledby="sponsor-heading">
+    <p class="eyebrow">Support Omastorm</p>
+    <h2 id="sponsor-heading">Help keep the radar running.</h2>
+    <p>Omastorm is free and open source. If it’s earned a place in your bar, consider sponsoring the work behind it.</p>
+    <p>Your support helps make time for the details: reliable live data, thoughtful improvements, and a radar that feels at home on your desktop.</p>
+    <a class="sponsor-link" href="https://github.com/sponsors/wesleygrimes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"/></svg>Sponsor on GitHub</a>
+    <p class="fine">A bug report, a contribution, or sharing Omastorm helps too. Thanks for being part of it.</p>
   </section>
 </main>
 <footer>
   <div class="foot">
-    <span><a href="https://github.com/wesleygrimes/omastorm">GitHub</a> · <a href="https://github.com/wesleygrimes/omastorm#readme">README</a> · <a href="https://github.com/wesleygrimes/omastorm/releases">Releases</a> · <a href="https://github.com/sponsors/wesleygrimes">♥ Sponsor</a> · MIT</span>
-    <span>Radar: NOAA NEXRAD · Map: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, <a href="https://openfreemap.org">OpenFreeMap</a>, Natural Earth · © 2026 Wesley Grimes</span>
+    <span><a href="https://github.com/wesleygrimes/omastorm">GitHub</a> · <a href="https://github.com/wesleygrimes/omastorm#readme">README</a> · <a href="https://github.com/wesleygrimes/omastorm/releases">Releases</a> · <a href="https://github.com/sponsors/wesleygrimes">Sponsor</a> · MIT</span>
+    <span>Radar: NOAA NEXRAD · Map: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, <a href="https://openfreemap.org">OpenFreeMap</a>, Natural Earth · Search: <a href="https://www.geonames.org/">GeoNames</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>) · © 2026 Wesley Grimes</span>
   </div>
 </footer>
 <script>
-  // Reduced motion: hold the poster and hand the visitor the controls.
-  var take = document.getElementById("take");
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    take.removeAttribute("autoplay");
-    take.removeAttribute("loop");
-    take.controls = true;
-    take.pause();
-  }
   // Copy buttons take the command text without the prompt glyph.
   document.querySelectorAll("button[data-copy]").forEach(function (b) {
     b.addEventListener("click", function () {
@@ -320,6 +372,13 @@ o.bind("SUPER + SHIFT + R", "Omastorm", "omarchy shell shell toggle com.omastorm
         b.textContent = "Copied";
         b.dataset.done = "";
         setTimeout(function () { b.textContent = "Copy"; delete b.dataset.done; }, 1500);
+      }).catch(function () {
+        b.textContent = "Select text";
+        var selection = window.getSelection();
+        var range = document.createRange();
+        range.selectNodeContents(document.getElementById(b.dataset.copy));
+        selection.removeAllRanges();
+        selection.addRange(range);
       });
     });
   });

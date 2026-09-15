@@ -1,49 +1,54 @@
 # omastorm.com
 
-Static, no build step: `index.html`, the live take as `take.mp4` with
-`take-poster.png` as its poster and the Open Graph image, and `_headers` for
-cache lifetimes, plus the mark as favicon and touch icon: `mark.svg` is the
-16-grid app-colored SVG from `branding/mark` with its cells merged into one
-path per color, and `mark-32.png` and `mark-256.png` are copies of the
-branding exports. The header draws the same 16 px mark inline in the page
-foreground, its cells from `ui/RadarMark.qml`. The two media files are generated and ignored, like the
-README media, so the plugin clone stays small; cut them before a deploy. The
-page follows the visitor's color scheme; the take was
-filmed in the dark theme and stays dark in both.
+Static HTML, with no build step. `index.html` summarizes the user guide in
+[../README.md](../README.md); keep installation, onboarding, search, playback,
+and update instructions in sync with it. The header links to releases without
+pinning a version that can become stale.
 
-Regenerate the media after a new take (`scripts/capture-demo.sh` writes
-`docs/media/omastorm-demo.mp4`):
+## Assets
+
+`media/{window,window-light,hero,search-city,treatments}.png` are committed
+copies of the corresponding README screenshots in `docs/media/readme/`.
+Refresh both sets when the interface changes. Dark Tokyo Night and light
+Flexoki Light window stills lead the page side by side, stacking on mobile.
+The window/popover hero, search, and treatment stills illustrate the guide.
+The hero is also the Open Graph sharing image.
+
+The site uses still images only. Every required image is committed; no video
+capture or generated media is needed for deployment. Cloudflare Pages caps
+each file at 25 MiB.
+
+The favicon and touch icons come from `branding/mark`; the header uses the
+same monochrome mark as the app. The page follows the visitor’s color scheme. The page uses JetBrains Mono throughout. Treatment names are HTML labels
+in that same font; CSS clips the older montage’s baked-in cursive labels. Decorative icons are SVG
+so they do not depend on a Nerd Font or symbol-font fallback. The dedicated
+sponsorship section links directly to GitHub Sponsors.
+`_headers` sets cache lifetimes. `robots.txt`, `sitemap.xml`, the canonical URL,
+and SoftwareApplication JSON-LD describe the public homepage.
+
+## Local review
+
+From the repository root:
 
 ```sh
-ffmpeg -y -i docs/media/omastorm-demo.mp4 -c:v libx264 -preset slow -crf 26 -pix_fmt yuv420p -movflags +faststart -an site/take.mp4
-ffmpeg -y -ss 2.5 -i docs/media/omastorm-demo.mp4 -frames:v 1 site/take-poster.png
+python -m http.server 8765 --directory site --bind 127.0.0.1
 ```
 
-The site copy is encoded lighter than the release asset (about 6 MB against
-under ~12 MB); the caption links the full-quality file on the `media-2026-09-10` release.
+Open http://127.0.0.1:8765. Check desktop and mobile widths, dark and light
+mode, the install/update copy buttons, and linked assets.
 
-`popover.png` is the bar-popover still shown under the take. Keep it next to
-`take.mp4` when deploying; it is small enough to commit if you want the site
-folder self-contained without regenerating stills.
-Cloudflare Pages caps a file at 25 MiB.
+## Deploy
 
-When the plugin version changes, update the tag in the header and its release
-link, both in `index.html`.
+Hosted on Cloudflare Pages, project `omastorm`, by direct upload. The zone has
+proxied CNAME records for the root and `www` pointing at `omastorm.pages.dev`.
+Deployment requires Wrangler authentication with Pages write access.
 
-Hosted on Cloudflare Pages, project `omastorm`, deployed by direct upload so
-the page stays independent of the git repo. The zone omastorm.com has proxied
-CNAME records for the root and `www` pointing at `omastorm.pages.dev`.
-Redeploy after any change:
+After review and approval, from the repository root:
 
 ```sh
 npx wrangler pages deploy site --project-name omastorm --branch main
 ```
 
-Deployment requires Wrangler authentication with Pages write access. Manage
-DNS through the Cloudflare connector or dashboard.
-
-Review a change without deploying:
-
-```sh
-chromium --headless=new --disable-gpu --hide-scrollbars --window-size=1280,1500 --screenshot=review/site.png file://$PWD/site/index.html
-```
+After deployment, check `/robots.txt` and `/sitemap.xml` return their actual
+files, then submit the sitemap in Google Search Console. Account settings
+and outreach follow-ups are in [docs/discovery.md](../docs/discovery.md).

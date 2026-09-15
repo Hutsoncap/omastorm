@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://omastorm.com/sitemap.xml
