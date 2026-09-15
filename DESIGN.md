@@ -2,8 +2,9 @@
 
 How a change, feature, or fix should behave.
 
-[README.md](README.md) is install and use. [docs/protocol.md](docs/protocol.md)
-is the wire. [docs/configuration.md](docs/configuration.md) is the config keys.
+[README.md](README.md) is the user guide. [docs/README.md](docs/README.md)
+indexes the rest of this tree. [docs/protocol.md](docs/protocol.md) is the
+wire. [docs/configuration.md](docs/configuration.md) is the config contract.
 [docs/radar-fetch.md](docs/radar-fetch.md) is how to get live and archived
 Level II bytes. [CONTRIBUTING.md](CONTRIBUTING.md) is the contribution
 workflow. Honor these; ask before violating them.
@@ -37,7 +38,7 @@ the ids and comments in `ui/RadarWindow.qml`.
 | **product line** | Product name / tilt and NOAA NEXRAD |
 | **meta line** | Age, right-aligned under the product line |
 | **map stage** | Radar map frame |
-| **follow chip** | Crosshair on the map (place follow); hidden until GPS is wired |
+| **locate chip** | Map marker, top-left of the map; jump to the approximate location |
 | **help chip** | Keys / `?` on the map |
 | **scale bar** | Ground distance under the map, left; locale picks km or mi; label updates with zoom |
 | **legend** | dBZ scale directly under the map |
@@ -84,20 +85,31 @@ existing prompt, with no additional dialog. "Use approximate location" runs
 one bounded `curl` to `wttr.in/?format=j2` only on click (UI-side; not an
 engine command); the provider and public-IP use are documented, and a
 successful view is labeled `IP NEAR …`. "Choose
-manually" opens the existing search and coordinates.
+manually" opens search.
 Remember a successful estimate like any chosen view. While it is pending,
 manual selection remains available and takes priority over a late reply.
 Failures show a short error and allow an explicit retry. There is no IP
 configuration knob; a click is the opt-in. IP never enables GPS or tracking.
-Offer place search and "Enter coordinates", which reveals
-labeled latitude and longitude fields with validation. Place search is an
-engine `search_places` reply over GeoNames cities with population ≥ 5000
-in the network envelope (state/region and country so two Jacksonvilles are
-distinct); map labels stay Natural Earth. "Show radar" accepts the location.
-No separate setup wizard or settings window is required. Keep the picker
-reachable after onboarding (`Shift+H` and LOCATION). Coordinate entry
+`/` opens one search: a city, a site id, or pasted coordinates in the same
+field. There is no lat/lon form. Rows are tagged `place` or `site` (at most
+four). Places rank first unless the query is three or four letters (a site
+id or its prefix: `kfcx`, `tlx`). Enter on a place centres the map there,
+unlocks, and selects the nearest radar; Enter on a site locks that radar
+and centres on it. Clicking the station title opens the same card listing
+the nearest dishes. Coordinates are decimal degrees, latitude then
+longitude, separated by a comma or a space (`36.23708, -79.97948`); they
+commit as a place. Invalid range is named. Do not swap a lon,lat paste.
+Place names come from an engine `search_places` reply over GeoNames cities
+with population ≥ 5000 in the network envelope (state/region and country so
+two Jacksonvilles are distinct); map labels stay Natural Earth.
+No separate setup wizard or settings window is required. Coordinate entry
 chooses a view; it does not create a permanent config override or lock a
 radar. Choosing a location writes `state.json`, never `config.toml`.
+The locate chip (`m`) is not search: one bounded `curl` to wttr.in, the
+same fetch as onboarding. It centres on the estimate, unlocks, and selects
+the nearest radar, keeping the current zoom. Off until clicked; a successful
+onboarding estimate does not enable it. Failure leaves the camera and
+flashes a short overlay on the map. Archived sessions never locate.
 
 Reuse Omarchy's location when available without requiring its weather plugin.
 Read weather settings only; never write them. Location search is an explicit
@@ -115,8 +127,8 @@ Remember center and zoom after movement settles, and remember changes to the
 UI radar lock. Unlocked radar selection follows the center using the protocol's
 nearest-station hysteresis; do not wait until the center leaves the radar's
 rings. Lock pins the source; `n` releases it and selects the nearest station
-without moving the camera. Choosing a station in search locks it and centres
-the map on that site. Automatic hand-off and loading a frame never move the
+without moving the camera. Choosing a station in search (or from the
+station title) locks it and centres the map on that site. Automatic hand-off and loading a frame never move the
 camera. Do not persist the automatically selected station.
 
 Closing preserves the view. Reopening restores it, with explicit config

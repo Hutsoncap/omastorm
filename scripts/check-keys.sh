@@ -99,17 +99,17 @@ call run search
 expect 'The search key opens the picker' true "$(quickshell ipc --pid "$pid" call picker status | grep -o '"open":[a-z]*' | cut -d: -f2)"
 quickshell ipc --pid "$pid" call picker close
 
-# Shift+H opens the location picker; a chosen point writes state, never config.
-call run home
+# `/` search: a chosen point writes state, never config.
+call run search
 for _ in {1..50}; do [[ $(quickshell ipc --pid "$pid" call location status | grep -o '"open":[a-z]*' | cut -d: -f2) == true ]] && break; sleep .1; done
-expect 'Shift+H opens the location picker' true "$(quickshell ipc --pid "$pid" call location status | grep -o '"open":[a-z]*' | cut -d: -f2)"
+expect 'search opens the picker' true "$(quickshell ipc --pid "$pid" call location status | grep -o '"open":[a-z]*' | cut -d: -f2)"
 quickshell ipc --pid "$pid" call location go 35.4 -97.5 "Moore"
 until_field lat 35.4
 until_field lon -97.5
 until_field locationSource state
 sleep 0.6
-state_exact "$check_dir/state.json" 35.4 -97.5 || fail "Shift+H location did not keep exact centre" "$(cat "$check_dir/state.json")"
-grep -q home_site "$check_dir/config.toml" && fail "Shift+H wrote home_site into config.toml"
+state_exact "$check_dir/state.json" 35.4 -97.5 || fail "search location did not keep exact centre" "$(cat "$check_dir/state.json")"
+grep -q home_site "$check_dir/config.toml" && fail "search wrote home_site into config.toml"
 
 # The fix applies through the file watch: no report, the new key in force,
 # and an explicit centre outranking the weather location.

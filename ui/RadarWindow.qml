@@ -183,6 +183,10 @@ Item {
             if (locationPicker.open && locationPicker.onboarding && !app.store.needsLocation) locationPicker.close();
             if (app.opened) app.applyView();
             app.maybeOfferLocation();
+            if (app.store.hasView && app.store.locationError && !app.store.needsLocation) {
+                app.flashMap(app.store.locationError);
+                app.store.locationError = "";
+            }
         }
         function onLocationPickerRequested() { if (app.opened) locationPicker.show(""); }
     }
@@ -216,13 +220,13 @@ Item {
         if (!session && KeyMap.envFloor(Quickshell.env("OMASTORM_WEAK")) === undefined) weakFloor = floor;
     }
     Component.onCompleted: applySettings()
-    readonly property bool overlayOpen: picker.open || locationPicker.open || sheet.open
+    readonly property bool overlayOpen: locationPicker.open || sheet.open
     function run(action) {
         switch (action) {
-        case "search": treatmentMenu.close(); picker.show(""); break;
+        case "search": treatmentMenu.close(); locationPicker.show(""); break;
         case "nearest": nearest(); break;
         case "lock": toggleLock(); break;
-        case "home": locationPicker.show(""); break;
+        case "locate": locateMe(); break;
         case "pan_left": map.pan(-1, 0); break;
         case "pan_right": map.pan(1, 0); break;
         case "pan_up": map.pan(0, -1); break;
@@ -271,13 +275,7 @@ Item {
         if (!state || !siteId) return;
         store.setLock(locked ? "" : siteId, !locked);
     }
-    // MOCK: what the place chip says. OMASTORM_MOCK_GPS stands in for a
-    // receiver so the GPS states can be captured without one.
-    readonly property string mockGps: Quickshell.env("OMASTORM_MOCK_GPS") || ""
-    readonly property string placeState: mockGps === "following" || mockGps === "home" ? "FOLLOWING" : mockGps === "nofix" ? "NO FIX" : ""
     readonly property string placeLabel: {
-        if (mockGps === "home") return "STOKESDALE";
-        if (mockGps && mockGps !== "paused") return "GPS";
         var t = app.resetTarget;
         if (t && Location.distanceKm(map.centerLat, map.centerLon, t.lat, t.lon) < 2) return (t.name || "OMARCHY'S LOCATION").toUpperCase();
         if (app.store.placeName && Location.distanceKm(map.centerLat, map.centerLon, app.store.centerLat, app.store.centerLon) < 2) {
@@ -291,6 +289,13 @@ Item {
     }
     property string notice: ""
     Timer { id: noticeTimer; interval: 3000; onTriggered: app.notice = "" }
+    property string mapNotice: ""
+    Timer { id: mapNoticeTimer; interval: Quickshell.env("OMASTORM_CAPTURE") ? 20000 : 3000; onTriggered: app.mapNotice = "" }
+    function flashMap(text) {
+        mapNotice = text || "";
+        if (mapNotice) mapNoticeTimer.restart();
+        else mapNoticeTimer.stop();
+    }
     function resetView() {
         store.resetView();
         applyView();
@@ -300,21 +305,45 @@ Item {
         if (!state || !s) return;
         store.followNearest(s.id);
     }
+    function locateMe() {
+        if (!store.hasView || store.needsLocation) return;
+        if (!state || state.source !== "live") {
+            flashMap("Archived views never locate");
+            return;
+        }
+        store.requestApproximateLocation("locate");
+    }
     function choose(s) {
         if (!state || !s) return;
         store.chooseRadar(s.id, Number(s.lat), Number(s.lon), s.name || s.id);
         applyView();
     }
+    function acceptSearch(row) {
+        if (!row) return;
+        if (row.kind === "site") {
+            app.choose(row.site);
+            return;
+        }
+        app.store.setPlace(row.lat, row.lon, row.name || row.label || "");
+        app.applyView();
+        var name = row.name || row.label || "";
+        app.notice = name ? "LOCATION · " + name.toUpperCase() : "LOCATION · " + row.lat.toFixed(4) + ", " + row.lon.toFixed(4);
+        noticeTimer.restart();
+    }
     // Drives the picker from outside for checks and captures:
     // quickshell ipc --pid <pid> call picker open tul
     IpcHandler {
         target: "picker"
-        function open(query: string): void { picker.show(query); }
-        function accept(): void { picker.accept(); }
-        function close(): void { picker.close(); }
-        function move(delta: int): void { picker.move(delta); }
-        function matches(): string { return JSON.stringify(picker.rows.map(r => r.site.id)); }
-        function status(): string { return JSON.stringify({open: picker.open, query: picker.query, selected: picker.selected, total: picker.ranked.total, focused: picker.fieldFocused}); }
+        function open(query: string): void { locationPicker.show(query, query ? undefined : "sites"); }
+        function accept(): void { locationPicker.accept(); }
+        function close(): void { locationPicker.close(); }
+        function move(delta: int): void { locationPicker.move(delta); }
+        function matches(): string {
+            return JSON.stringify(locationPicker.rows.map(r => r.kind === "site" ? r.site.id : (r.label || r.name)));
+        }
+        function status(): string {
+            return JSON.stringify({open: locationPicker.open, query: locationPicker.query, selected: locationPicker.selected, total: locationPicker.siteRanked.total, focused: locationPicker.fieldFocused});
+        }
     }
     IpcHandler {
         target: "location"
@@ -323,10 +352,12 @@ Item {
         function close(): void { locationPicker.close(); }
         function move(delta: int): void { locationPicker.move(delta); }
         function go(lat: string, lon: string, name: string): void { locationPicker.go(Number(lat), Number(lon), name); }
-        function setLat(text: string): void { locationPicker.latText = text; }
-        function setLon(text: string): void { locationPicker.lonText = text; }
-        function matches(): string { return JSON.stringify(locationPicker.rows.map(r => r.where ? r.name + ", " + r.where : r.name)); }
-        function status(): string { return JSON.stringify({open: locationPicker.open, query: locationPicker.query, selected: locationPicker.selected, focused: locationPicker.fieldFocused, count: locationPicker.rows.length, lat: locationPicker.latText, lon: locationPicker.lonText, error: locationPicker.coordError}); }
+        function matches(): string {
+            return JSON.stringify(locationPicker.rows.map(r => r.kind === "site" ? r.site.id : (r.where ? (r.name + ", " + r.where) : (r.label || r.name))));
+        }
+        function status(): string {
+            return JSON.stringify({open: locationPicker.open, query: locationPicker.query, selected: locationPicker.selected, focused: locationPicker.fieldFocused, count: locationPicker.rows.length, error: locationPicker.coordError});
+        }
     }
     readonly property var theme: session ? session.theme.snapshot : themeInputs.snapshot
     Theme { id: themeInputs; registerIpc: !app.session }
@@ -400,7 +431,7 @@ Item {
             readonly property var icons: ({
                 "play": "󰐊", "pause": "󰏤", "back": "󰒮", "fwd": "󰒭",
                 "first": "󰒫", "last": "󰒬", "lock": "󰌾", "unlock": "󰌿",
-                "keys": "󰌌", "follow": "󰆣", "search": "󰍉", "chevron": "󰅀",
+                "keys": "󰌌", "locate": "󰍎", "search": "󰍉", "chevron": "󰅀",
                 "radar": "󰐷"
             })
             Text {
@@ -439,7 +470,7 @@ Item {
         // padlock = pin radar), filled with the accent while on.
         component Chip: RowLayout {
             id: chip
-            property string glyph: "follow"
+            property string glyph: "locate"
             property string label: ""
             property string tag: ""
             property bool on: false
@@ -511,7 +542,7 @@ Item {
             //   product line  — REFLECTIVITY / tilt + NOAA NEXRAD
             //   meta line     — age, right-aligned under the product line
             //   map stage     — radar map frame
-            //   follow chip   — crosshair (place follow); hidden until GPS
+            //   locate chip   — map marker, top-left of the map
             //   help chip     — ? keys on the map
             //   scale bar     — ground distance, bottom-left of the map
             //   legend        — dBZ scale under the map
@@ -559,7 +590,7 @@ Item {
                     padding: 0
                     focusPolicy: Qt.NoFocus
                     enabled: !!app.state
-                    onClicked: picker.show("")
+                    onClicked: locationPicker.show("", "sites")
                     Layout.alignment: Qt.AlignTop
                     contentItem: RowLayout {
                         spacing: 8
@@ -683,24 +714,34 @@ Item {
                     onTilesNeeded: (z, x0, y0, x1, y1) => engine.send({type: "tiles_needed", z: z, x0: x0, y0: y0, x1: x1, y1: y1})
                 }
                 Connections { target: engine; function onTileReady(tile) { map.tileReady(tile); } }
-                // Place-follow (crosshair) stays out of the release until GPS
-                // is wired; keep the mock chip for captures via OMASTORM_MOCK_GPS.
-                // N ↑ is map orientation only — not a control.
-                Rectangle {
-                    id: followChip
+                // Locate (DESIGN.md): map marker, top-left; north sits beside it.
+                Row {
+                    id: mapTopLeft
                     anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 10
-                    width: 26; height: 26
-                    readonly property bool on: app.mockGps === "following" || app.mockGps === "home"
-                    color: on ? app.theme.accent : followArea.containsMouse ? Qt.alpha(app.theme.accent, .18) : Qt.alpha(app.theme.background, .9)
-                    border.width: 1; border.color: on ? app.theme.accent : Qt.alpha(app.theme.foreground, .22)
-                    visible: false
-                    Glyph { anchors.centerIn: parent; glyph: "follow"; ink: followChip.on ? app.theme.background : app.theme.foreground }
-                    MouseArea { id: followArea; anchors.fill: parent; hoverEnabled: true }
-                }
-                LabelText {
-                    anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 10
-                    text: "N ↑"; opacity: .75
+                    spacing: 8
                     visible: !!app.state
+                    Rectangle {
+                        id: locateChip
+                        width: 26; height: 22
+                        readonly property bool pending: app.store.locating && app.store.locateKind === "locate"
+                        readonly property bool canLocate: !!app.state && app.store.hasView && app.state.source === "live"
+                        color: pending ? app.theme.accent : locateArea.containsMouse && canLocate ? Qt.alpha(app.theme.accent, .18) : Qt.alpha(app.theme.background, .9)
+                        border.width: 1; border.color: pending ? app.theme.accent : Qt.alpha(app.theme.foreground, .22)
+                        visible: app.store.hasView
+                        opacity: canLocate ? (locateArea.containsMouse || pending ? 1 : .7) : .35
+                        Glyph { anchors.centerIn: parent; glyph: "locate"; ink: locateChip.pending ? app.theme.background : app.theme.foreground }
+                        MouseArea {
+                            id: locateArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            enabled: locateChip.canLocate
+                            onClicked: app.run("locate")
+                        }
+                    }
+                    LabelText {
+                        text: "N ↑"; opacity: .75
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
                 }
                 // The `?` chip in the map's top-right corner (DESIGN.md, window
                 // chrome) opens the keys sheet, as does the key itself.
@@ -811,6 +852,24 @@ Item {
                     font.pixelSize: 10; opacity: .55
                 }
                 LabelText { anchors.centerIn: parent; width: parent.width-24; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter; text: map.error || engine.error; visible: text.length > 0 }
+                Rectangle {
+                    id: mapToast
+                    visible: app.mapNotice !== ""
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 44
+                    width: toastText.implicitWidth + 20
+                    height: 26
+                    color: Qt.alpha(app.theme.background, .92)
+                    border.width: 1
+                    border.color: Qt.alpha(app.theme.foreground, .22)
+                    LabelText {
+                        id: toastText
+                        anchors.centerIn: parent
+                        text: app.mapNotice
+                        color: app.theme.accent
+                    }
+                }
             }
             // legend — colors for the map above
             ColumnLayout {
@@ -955,12 +1014,11 @@ Item {
                 // place to the map, treatment and zoom to the keys and wheel.
                 visible: false
                 Chip {
-                    glyph: "follow"
+                    glyph: "locate"
                     label: app.placeLabel
-                    tag: app.placeState
-                    on: app.mockGps === "following" || app.mockGps === "home"
-                    tagAccent: on
+                    on: false
                     onOpened: locationPicker.show("")
+                    onToggled: app.run("locate")
                 }
                 Chip {
                     glyph: "lock"
@@ -970,7 +1028,7 @@ Item {
                     tagAccent: app.locked
                     enabled: !!app.state
                     onToggled: app.toggleLock()
-                    onOpened: picker.show("")
+                    onOpened: locationPicker.show("", "sites")
                 }
                 Item { width: 6 }
                 Item { Layout.fillWidth: true }
@@ -1002,19 +1060,6 @@ Item {
                 Control { text: "+"; visible: !win.compact; onClicked: map.zoom(Math.min(map.span,map.maxSpan)/1.25) }
             }
           }
-          // The site picker over everything, its card's top on the map's.
-          SitePicker {
-            id: picker
-            anchors.fill: parent
-            sites: engine.sites
-            theme: app.theme
-            centerLat: map.centerLat
-            centerLon: map.centerLon
-            homeSite: ""
-            compact: win.compact
-            cardTop: layout.anchors.margins + mapFrame.y
-            onChosen: site => app.choose(site)
-          }
           LocationPicker {
             id: locationPicker
             session: app.store
@@ -1022,17 +1067,13 @@ Item {
             anchors.fill: parent
             theme: app.theme
             engine: engine
+            sites: engine.sites
             closeOnScrim: !app.store.needsLocation
             centerLat: map.centerLat
             centerLon: map.centerLon
             compact: win.compact
             cardTop: layout.anchors.margins + mapFrame.y
-            onChosen: (lat, lon, name) => {
-                app.store.setPlace(lat, lon, name);
-                app.applyView();
-                app.notice = name ? "LOCATION · " + name.toUpperCase() : "LOCATION · " + lat.toFixed(4) + ", " + lon.toFixed(4);
-                noticeTimer.restart();
-            }
+            onChosen: row => app.acceptSearch(row)
           }
           // The treatment menu over the surface (not a Popup, which the
           // window overlay would draw outside the captured surface): a card

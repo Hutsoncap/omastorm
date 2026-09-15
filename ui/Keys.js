@@ -6,13 +6,14 @@
 // sequence parses (an empty string means it does not).
 
 // Bindings are Qt key sequences separated by spaces: "h Left" binds both.
-// Shift+L is the lock because lowercase l pans; the digit keys pick a
-// treatment; `w` toggles the weak-return floor; `?` opens the sheet; Escape with nothing open closes the window.
+// Shift+L is the lock because lowercase l pans; `m` jumps to the approximate
+// location; the digit keys pick a treatment; `w` toggles the weak-return floor;
+// `?` opens the sheet; Escape with nothing open closes the window.
 var ACTIONS = [
     { id: "search", keys: "/ s" },
     { id: "nearest", keys: "n" },
     { id: "lock", keys: "Shift+L" },
-    { id: "home", keys: "Shift+H" },
+    { id: "locate", keys: "m" },
     { id: "pan_left", keys: "h Left" },
     { id: "pan_down", keys: "j Down" },
     { id: "pan_up", keys: "k Up" },
@@ -35,10 +36,10 @@ var ACTIONS = [
 // The sheet's two columns (DESIGN.md). A row of
 // several actions shows each one's first key and names the alternates.
 var ROWS = [
-    [{ label: "search sites", actions: ["search"] },
+    [{ label: "search", actions: ["search"] },
      { label: "nearest radar", actions: ["nearest"] },
      { label: "lock / release radar", actions: ["lock"] },
-     { label: "choose location", actions: ["home"] },
+     { label: "my location", actions: ["locate"] },
      { label: "pan", actions: ["pan_left", "pan_down", "pan_up", "pan_right"] },
      { label: "zoom", actions: ["zoom_in", "zoom_out"] },
      { label: "reset to location", actions: ["reset"] }],

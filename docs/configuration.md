@@ -1,4 +1,7 @@
-# Configuration
+# Configuration contract
+
+The user-facing explanation is in [README.md](../README.md). This file is
+the complete setting contract for checks, captures, and contributors.
 
 ## Preferences and remembered state
 
@@ -43,27 +46,29 @@ view without another lookup. The initial view is labeled `IP NEAR …`;
 coordinates may reflect a VPN or ISP location. Choose manually to correct an
 estimate.
 
-While locating, manual selection remains available. A failed request shows a
-short error and can be retried. Requests time out after ten seconds. Manual
-selection or navigation takes priority over a late response. Archived
+While locating, manual selection remains available. A failed onboarding
+request shows a short error on the prompt and can be retried. A failed
+locate flashes an overlay on the map. Requests time out after ten seconds.
+Manual selection or navigation takes priority over a late response. Archived
 sessions never locate. `OMASTORM_LOCATION_URL` lets tests substitute a local
 URL; isolated checks still need to invoke the explicit action.
 
-IP lookup is a one-time starting position. It never enables GPS or continuous
-camera tracking.
+IP lookup is an explicit click: onboarding or the locate chip (`m`). It never
+enables GPS or continuous camera tracking.
 
 A missing location opens the same choice in the popover and expanded window.
-Choose manually opens the existing search and coordinate fields. Accepting a location saves the
+Choose manually opens search: a city, a site, or pasted coordinates
+(latitude, then longitude). Accepting a location saves the
 view in state. Weather-derived initial coordinates are also saved in state.
-Neither route adds coordinate overrides to config. The picker remains
-available through `Shift+H` and LOCATION after onboarding.
+Neither route adds coordinate overrides to config. `/` opens that search
+after onboarding. `m` jumps to the approximate location without typing.
 
 Resolve the radar independently: configured `locked_radar`, then a remembered
 UI lock, then the nearest station to the resolved center. A configured radar
 alone does not resolve a location. Coordinates never imply a lock. Choosing a
-station in search locks it and centres the map on that site. `n` selects the
-nearest radar without moving the camera. Choosing a location through the
-picker clears a remembered lock; a configured override still applies.
+station in search locks it and centres the map on that site. Choosing a city
+or coordinates unlocks and selects the nearest radar. `n` selects the
+nearest radar without moving the camera. A configured override still applies.
 
 Restore remembered zoom, or the default zoom when none is valid. Keep the
 camera at the resolved location when frames arrive. Close and reopen preserve
@@ -132,8 +137,8 @@ the machine's own state and weather files are not read unless
   `OMASTORM_WEAK` (`off` or a number), set by the capture scripts, outranks
   it. Anything else is reported like a bad `treatment` and leaves the default.
 - `[keys]`: one entry per action, laid over the defaults in `ui/Keys.js`:
-  `search` (`/ s`), `nearest` (`n`), `lock` (`Shift+L`), `home` (`Shift+H`,
-  the location picker), `pan_left`
+  `search` (`/ s`), `nearest` (`n`), `lock` (`Shift+L`), `locate` (`m`,
+  approximate location), `pan_left`
   `pan_down` `pan_up` `pan_right` (`h j k l` and the arrows), `zoom_in`
   (`+ =`), `zoom_out` (`-`), `reset` (`0`, the resolved location), `previous_frame` (`[`),
   `next_frame` (`]`), `play` (`Space`), `oldest` (`Home`), `newest` (`End`),

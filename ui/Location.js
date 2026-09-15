@@ -97,7 +97,7 @@ function configErrors(values) {
             errors.push("locked_radar must be a quoted station id");
     }
     if (values.home_site !== undefined)
-        errors.push("home_site is unused; location is a place (center_lat/center_lon or the location picker)");
+        errors.push("home_site is unused; location is a place (center_lat/center_lon or search)");
     if (values.follow !== undefined)
         errors.push("follow is unused; the map follows the nearest radar unless locked");
     return errors;
@@ -183,4 +183,44 @@ function parseWttrHome(raw) {
         }
         return { name: name, lat: lat, lon: lon };
     } catch (e) { return null; }
+}
+
+// `/` search (DESIGN.md): three or four letters is a site id or prefix.
+function looksLikeSiteId(query) {
+    return /^[A-Za-z]{3,4}$/.test(String(query).trim());
+}
+
+// Decimal degrees, latitude then longitude, comma or space (Google Maps).
+// null means the text is not a coordinate pair; otherwise parseCoordFields.
+function parseCoordQuery(text) {
+    var t = String(text).trim();
+    if (!t) return { empty: true };
+    var m = t.match(/^([+-]?\d+(?:\.\d+)?)\s*[, ]\s*([+-]?\d+(?:\.\d+)?)$/);
+    if (!m) return null;
+    return parseCoordFields(m[1], m[2]);
+}
+
+function coordRow(lat, lon) {
+    return {
+        kind: "place",
+        name: lat.toFixed(4) + ", " + lon.toFixed(4),
+        where: "coordinates",
+        label: lat.toFixed(4) + ", " + lon.toFixed(4),
+        lat: lat,
+        lon: lon
+    };
+}
+
+// Mix site rows, place rows, and an optional coordinate row. Empty query
+// with browseSites lists the nearest dishes; otherwise type to search.
+// Places first unless the query looks like a site id.
+function mergeSearch(siteRows, placeRows, coord, query, browseSites, limit) {
+    var cap = typeof limit === "number" && limit > 0 ? limit : 4;
+    var sites = siteRows || [], places = placeRows || [];
+    var q = String(query || "").trim();
+    var extra = coord && coord.lat !== undefined ? [coordRow(coord.lat, coord.lon)] : [];
+    if (coord && coord.error) return extra.slice(0, cap);
+    if (!q) return browseSites ? sites.slice(0, cap) : extra.slice(0, cap);
+    var combined = looksLikeSiteId(q) ? sites.concat(extra, places) : extra.concat(places, sites);
+    return combined.slice(0, cap);
 }

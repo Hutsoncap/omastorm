@@ -22,8 +22,9 @@ in this app, and how it fits [DESIGN.md](DESIGN.md). Keep the feature set small.
 
 ## Develop
 
-Read [README.md](README.md) for the app and [DESIGN.md](DESIGN.md) for product
-rules. [docs/protocol.md](docs/protocol.md) defines the engine/client contract;
+Read [README.md](README.md) for the user guide and [DESIGN.md](DESIGN.md) for product
+rules. [docs/README.md](docs/README.md) indexes internal docs.
+[docs/protocol.md](docs/protocol.md) defines the engine/client contract;
 [engine/README.md](engine/README.md) maps the backend.
 
 Use an Omarchy desktop with Quickshell and OpenGL, `qt6-shadertools`, and
@@ -34,6 +35,11 @@ mise install
 mise setup
 mise start
 ```
+
+The tree: `engine/` the Rust daemon, `ui/` the Quickshell client, `scripts/`
+bootstrap and checks, `docs/` internal docs ([docs/README.md](docs/README.md)),
+`data/` fixture provenance, `golden/` the decoder answer key, `site/`
+omastorm.com.
 
 Setup checks desktop dependencies, extracts verified fixtures, and builds the
 engine. Rust comes from mise; use `mise exec -- cargo …` for Cargo commands.
@@ -79,8 +85,9 @@ is the sequence.
 [golden/](golden/) is the decoder's answer key. Regenerating it is a
 decoder-contract change: keep the provenance and dates in the JSON, and do not
 rewrite it to match a new decode by accident. Capture scripts write images
-under `review/` for visual review; those stay out of git. Regenerate them when
-the picture changed, and include the captures with the review.
+under `review/` for visual review; those stay out of git. README stills are
+`docs/media/readme/` (`bash scripts/capture-readme.sh`). Include review
+captures with a rendering change.
 
 Honor [DESIGN.md](DESIGN.md): actual scan times, no forecasts, chrome from the
 Omarchy theme, radar color only from `frame.palette`.

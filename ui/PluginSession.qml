@@ -30,9 +30,10 @@ QtObject {
     property bool ipLocationDismissed: true
     property bool locationPending: false
     property string locationError: ""
+    property string locateKind: ""
     property int locateAttempt: 0
     property int activeAttempt: 0
-    readonly property bool locating: needsLocation && !ipLocationDismissed && locationPending
+    readonly property bool locating: locationPending && (locateKind === "locate" || (needsLocation && !ipLocationDismissed))
     property real centerLat: 0
     property real centerLon: 0
     property real span: Location.DEFAULT_SPAN
@@ -54,6 +55,7 @@ QtObject {
     function cancelIpLocation() {
         ipLocationDismissed = true;
         locationPending = false;
+        locateKind = "";
         locateAttempt += 1;
         locator.queued = false;
         if (locator.running) locator.running = false;
@@ -75,16 +77,23 @@ QtObject {
     }
 
     // One-shot wttr.in estimate (DESIGN.md). UI curl — not the engine.
-    function requestIpLocation() {
-        if (!initialized || !ready || hasView || !needsLocation
-            || locationPending || !engine.state || engine.state.source !== "live") return;
+    // kind is "onboarding" (first view) or "locate" (jump while a view exists).
+    function requestApproximateLocation(kind) {
+        kind = kind || "onboarding";
+        if (!initialized || !ready || locationPending
+            || !engine.state || engine.state.source !== "live") return;
+        if (kind === "onboarding" && (hasView || !needsLocation)) return;
+        if (kind === "locate" && (!hasView || needsLocation)) return;
         locateAttempt += 1;
         activeAttempt = locateAttempt;
+        locateKind = kind;
         ipLocationDismissed = false;
         locationError = "";
         locationPending = true;
         var url = Quickshell.env("OMASTORM_LOCATION_URL") || "https://wttr.in/?format=j2";
-        locator.command = ["curl", "-fsS", "--max-time", "10", "-A",
+        // -k: wttr.in's Let's Encrypt leaf lapses (expired this morning
+        // here); this is an IP city estimate, not a trusted channel.
+        locator.command = ["curl", "-fsSk", "--max-time", "10", "-A",
             "omastorm (https://omastorm.com)", url];
         // Bind the attempt to this launch. If a prior curl is still dying after
         // cancel, queue one restart instead of overwriting its exit attribution.
@@ -97,16 +106,53 @@ QtObject {
         locator.running = true;
     }
 
+    function requestIpLocation() { requestApproximateLocation("onboarding"); }
+
+    function applyLocate(place) {
+        if (!ready || !hasView || !place
+            || !engine.state || engine.state.source !== "live") {
+            locationPending = false;
+            locateKind = "";
+            return;
+        }
+        centerLat = place.lat;
+        centerLon = place.lon;
+        placeName = place.name || "";
+        locationSource = "ip";
+        hasView = true;
+        var cfg = Location.configLock(config.values);
+        if (cfg && lockSource === "config") {
+            lockId = cfg;
+            lockWanted = true;
+            lockSource = "config";
+        } else {
+            lockId = "";
+            lockWanted = false;
+            lockSource = "nearest";
+        }
+        locationPending = false;
+        locateKind = "";
+        persist();
+        viewChanged();
+        applyRadar();
+    }
+
     function acceptIpLocation(place) {
+        if (locateKind === "locate") {
+            applyLocate(place);
+            return;
+        }
         if (!ready || hasView || ipLocationDismissed || !place
             || !engine.state || engine.state.source !== "live") {
             locationPending = false;
+            locateKind = "";
             return;
         }
         // Recheck sources that may have arrived while the lookup was pending.
         resolve();
         if (hasView) {
             locationPending = false;
+            locateKind = "";
             return;
         }
         centerLat = place.lat;
@@ -117,6 +163,7 @@ QtObject {
         hasView = true;
         needsLocation = false;
         locationPending = false;
+        locateKind = "";
         persist();
         viewChanged();
         applyRadar();
@@ -125,20 +172,33 @@ QtObject {
     function finishIpLocation(exitCode, raw, attempt) {
         // A cancelled or superseded curl can still report; ignore it.
         if (attempt !== undefined && attempt !== locateAttempt) return;
-        if (ipLocationDismissed || hasView || !needsLocation) {
+        var locatingNow = locateKind === "locate";
+        if (!locatingNow && (ipLocationDismissed || hasView || !needsLocation)) {
             locationPending = false;
+            locateKind = "";
+            return;
+        }
+        if (locatingNow && (!hasView || needsLocation || ipLocationDismissed)) {
+            locationPending = false;
+            locateKind = "";
             return;
         }
         if (exitCode !== 0) {
-            locationError = "Couldn’t find your location. Try again or choose manually.";
+            locationError = locatingNow
+                ? "Couldn’t find your location."
+                : "Couldn’t find your location. Try again or choose manually.";
             locationPending = false;
+            locateKind = "";
             viewChanged();
             return;
         }
         var place = Location.parseWttrHome(raw);
         if (!place) {
-            locationError = "Couldn’t find your location. Try again or choose manually.";
+            locationError = locatingNow
+                ? "Couldn’t find your location."
+                : "Couldn’t find your location. Try again or choose manually.";
             locationPending = false;
+            locateKind = "";
             viewChanged();
             return;
         }

@@ -24,7 +24,7 @@ mkdir -p "$XDG_RUNTIME_DIR" "$XDG_CACHE_HOME" "$demo_dir/shaders" "$demo_dir/fra
 jq -r --arg id "$site" '.sites[] | select(.id==$id) | "center_lat = \(.lat)\ncenter_lon = \(.lon)\nlocked_radar = \"\(.id)\""' engine/data/sites.json > "$OMASTORM_CONFIG"
 cleanup() { target/debug/omastorm-engine stop >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-cp ui/Theme.qml ui/Engine.qml ui/RadarMark.qml ui/RadarMap.qml ui/SitePicker.qml ui/Sites.js ui/KeysSheet.qml ui/Keys.js ui/Timeline.js ui/Config.qml ui/Toml.js ui/Location.js ui/LocationPicker.qml ui/LocationPrompt.qml ui/Remembered.qml ui/PluginSession.qml ui/qmldir "$demo_dir/"
+cp ui/Theme.qml ui/Engine.qml ui/RadarMark.qml ui/RadarMap.qml ui/Sites.js ui/KeysSheet.qml ui/Keys.js ui/Timeline.js ui/Config.qml ui/Toml.js ui/Location.js ui/LocationPicker.qml ui/LocationPrompt.qml ui/Remembered.qml ui/PluginSession.qml ui/qmldir "$demo_dir/"
 cp ui/shaders/*.qsb "$demo_dir/shaders/"
 ruby - "$demo_dir" <<'RUBY'
 dir = ARGV.fetch(0)
@@ -55,11 +55,11 @@ harness = <<'QML'
             { dur: 45, enter: () => app.treatment = "GLYPHS" },
             { dur: 60, enter: () => app.run("weak") },
             { dur: 30, enter: () => app.run("weak") },
-            { dur: 30, enter: () => picker.show("") },
-            { dur: 18, enter: () => picker.query = "t" },
-            { dur: 18, enter: () => picker.query = "ta" },
-            { dur: 50, enter: () => picker.query = "tal" },
-            { dur: 360, enter: () => picker.accept(),
+            { dur: 30, enter: () => locationPicker.show("", "sites") },
+            { dur: 18, enter: () => locationPicker.query = "t" },
+            { dur: 18, enter: () => locationPicker.query = "ta" },
+            { dur: 50, enter: () => locationPicker.query = "tal" },
+            { dur: 360, enter: () => locationPicker.accept(),
               until: () => app.siteId !== Quickshell.env("OMASTORM_DEMO_HOME") && app.scan && app.scan.scanTime !== "" && app.scan.status === "complete" },
             { dur: 75 },
             { dur: 90, enter: () => app.run("help") },

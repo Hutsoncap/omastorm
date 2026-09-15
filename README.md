@@ -1,40 +1,18 @@
 # Omastorm
 
-Open-source, live NEXRAD radar for the Omarchy desktop. Beta.
+Live NEXRAD radar in your Omarchy bar. Beta.
 
-[![Omastorm window: live take with loop, search, keys, and treatments](https://github.com/wesleygrimes/omastorm/releases/download/media-2026-09-10/omastorm-preview.gif)](https://github.com/wesleygrimes/omastorm/releases/download/media-2026-09-10/omastorm-demo.mp4)
+A radar that lives next to the clock. The popover is the station nearest you
+and the actual scan time. Click the map (or press Enter) for the full window:
+every dish in the network, the sweep at native resolution, a two-hour loop
+you can play and scrub, drawn in your Omarchy theme.
 
-Live KJAX: the refactored window chrome, timeline ticks, and playback loop.
+![The Omastorm window](docs/media/readme/window.png)
 
-A radar that lives in your bar. The popover shows the station nearest you with
-the actual scan time. Click the map (or press Enter) for the full window: every
-NEXRAD site in the network, reflectivity at native resolution, a timeline you
-can scrub, all drawn in your Omarchy theme.
+![The Omastorm bar popover](docs/media/readme/popover.png)
 
-![The Omastorm window, live](https://github.com/wesleygrimes/omastorm/releases/download/media-2026-09-10/window-live.png)
-
-![The Omastorm popover, live](https://github.com/wesleygrimes/omastorm/releases/download/media-2026-09-10/popover.png)
-
-A headless Rust engine fetches and decodes NEXRAD Level II data and prepares
-GPU-ready radar textures. An Omarchy plugin built with Quickshell/QML is the
-client: it displays those textures in the bar popover and full window.
-
-## Features
-
-- **Live.** A Rust engine polls NOAA's public Level II feed and sweeps paint as
-  the antenna turns. Stale data says it is stale.
-- **Every site.** Pan the map and it follows the nearest station, or search by
-  id, city, or state.
-- **Timeline.** The last two hours of scans per station, up to 60, cached locally.
-  Play, step, scrub.
-- **Three treatments.** Glyphs, Pixels, and Stipple sample the same gate and
-  paint the cell differently.
-- **Native.** Colors, font, and spacing come from the active Omarchy theme and
-  change with it.
-- **Keyboard first.** Everything the pointer reaches is a keystroke, and every
-  key is rebindable.
-- **Honest.** Actual scan times. Missing, range-folded, and below-threshold
-  returns are drawn distinctly from measured values. Displays individual radar sweeps.
+This page is the user guide: install, first run, and everyday use. How the
+code is built lives in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Install
 
@@ -44,142 +22,219 @@ Omarchy 4 on x86_64 and aarch64.
 omarchy plugin add https://github.com/wesleygrimes/omastorm.git --enable
 ```
 
-This clones the plugin into `~/.config/omarchy/plugins/com.omastorm.radar` and
-asks which bar section to use. The first time the popover opens it downloads
-the pinned engine binary from this repository's GitHub Releases, verifies its
-sha256 against `engine/release.pin`, and installs it under
-`~/.local/share/omastorm/bin`. Runtime files, cached data, remembered view state, and configuration stay
-inside Omastorm's own directories.
+That clones the plugin, asks which bar section to use, and on first open
+downloads the pinned engine from GitHub Releases, checks its sha256, and
+installs it under `~/.local/share/omastorm/bin`. Configuration, remembered
+view, and cached scans stay in Omastorm's own directories.
 
-On first use, Omastorm uses your Omarchy weather location when available.
-Otherwise, choose a place manually or click **Use approximate location** to
-estimate your city using your public IP via wttr.in. No IP-location request
-is made before you click. To set
-a fixed launch location, including during agent-assisted installation, see
-[configuration and remembered state](docs/configuration.md).
-
-To open the window from the keyboard, add one line to
-`~/.config/hypr/bindings.lua`. Omastorm never writes that file.
+Optional: a Hyprland key to toggle the window (Omastorm never writes this
+file):
 
 ```lua
 o.bind("SUPER + SHIFT + R", "Omastorm", "omarchy shell shell toggle com.omastorm.radar '{}'")
 ```
 
-To list Omastorm in the app launcher:
+Optional: list it in the app launcher:
 
 ```sh
 bash ~/.config/omarchy/plugins/com.omastorm.radar/scripts/write-desktop-entry.sh
 ```
 
-Update, then restart the shell so it loads the new files:
+## First run
 
-```sh
-omarchy plugin update com.omastorm.radar
-omarchy restart shell
-```
+Open the popover from the bar. If Omarchy weather already has a city, the
+map opens there. If not, you get a choice: pick a place, or use an
+approximate location.
 
-Until the restart, the shell keeps running the plugin it loaded at login, old
-engine pin included. Omastorm notices the update on disk and says so in the
-popover and the window; clicking that notice in the popover restarts the
-shell.
+![Choose your location](docs/media/readme/onboard.png)
 
-## Use
+**Use approximate location** is one click. It asks [wttr.in](https://wttr.in)
+to guess your city from the public IP of that request. Nothing is sent until
+you click; there is no GPS and no background tracking. A VPN or CGNAT may
+land you at the ISP instead of your house. Choose manually if the guess is
+wrong.
 
-Click the mark in the bar for the popover: the map at your location, LIVE or
-the connection condition, the actual scan time, and step and play. Click the
-map (or press Enter) to expand.
-If no location is known, the popover offers “Choose a location,” which opens
-the picker in the window. Click the radar or press Enter for the window; it
-opens on the same station, frame, and camera. Closing preserves your view
-for the next launch.
+The view is remembered. Next time you open the popover, you are back where
+you left off.
 
-In the window, drag to pan and scroll to zoom. The map follows the nearest
-station as you pan unless you lock it; a locked radar stays put even when
-the camera leaves its coverage, and the lock turns yellow outside the rings.
-A scale bar under the map shows ground distance in your locale (km or mi).
-A station you arrive at fetches its last dozen scans, so there is a loop to
-play within a few seconds; the cache then grows to 60 as new scans arrive,
-and scans older than two hours drop out.
-The stamp above the timeline is the absolute scan time; the meta line is how
-stale that frame is. LIVE, STALE after ten minutes, UNAVAILABLE or OFFLINE
-when the feed cannot be reached, with cached frames kept.
+## What you are looking at
+
+NEXRAD is NOAA's network of weather radars. Each dish spins, sends a pulse,
+and measures how much bounced back. Omastorm shows **reflectivity** on the
+lowest tilt: the beam that stays closest to the ground.
+
+Color is **dBZ**, not a rain rate and not a warning. Stronger return, warmer
+color. The legend under the map is that scale.
+
+A bright blob is often rain or snow. The same beam also sees:
+
+- insects, birds, and bats (especially on clear evenings)
+- dust, smoke, and sea spray
+- ground clutter and buildings near the dish
+- anomalous propagation, when the beam bends and paints the ground far away
+- wind farms, towers, and military chaff
+
+Measured returns under 5 dBZ (the usual biological clutter and haze) are
+hidden by default; the legend says so. Press `w` to show them.
+
+This is not a forecast, and it is not the NWS warning stack. It is the sweep
+that dish published, with the scan time on the stamp.
+
+## The window
+
+Drag to pan, scroll to zoom. The map and the radar are independent: panning
+moves the camera; the dish is whichever station the map is following, unless
+you lock it.
+
+Click the station name for nearby dishes. The padlock pins that radar so
+panning will not hand off; it turns yellow when the camera sits outside that
+dish's rings. `n` picks the nearest radar and leaves the camera where it is.
+
+The number under the product line is how stale the frame on screen is. The
+stamp above the timeline is when that sweep was observed. **LIVE** is the
+feed; the light beside it goes yellow when data is stale (ten minutes) and
+red when the station or the bucket is unreachable. Cached frames stay.
+
+A scale bar on the map is ground distance, in kilometres or miles from your
+locale.
+
+## Search
+
+`/` (or `s`) is one field. Type a city, a site id, or paste coordinates.
+
+A **city** centres the map there, unlocks, and selects the nearest radar.
+
+![Search a city](docs/media/readme/search-city.png)
+
+A **site** (`KTLX`, `tlx`) locks that dish and centres on it. Clicking the
+station title opens the same card on the nearest dishes.
+
+![Search a radar site](docs/media/readme/search-site.png)
+
+**Coordinates** are latitude then longitude, decimal degrees, comma or space,
+the way a maps link looks. Invalid range is named on the card; the layout
+does not jump.
+
+![Paste coordinates](docs/media/readme/search-coords.png)
+
+![Coordinates out of range](docs/media/readme/search-error.png)
+
+## My location
+
+The map-marker at the top-left of the map, or `m`, jumps to the same
+approximate IP location as first run. Zoom stays. The radar unlocks and
+follows. Archived sessions never locate.
+
+If the lookup fails, the camera stays put and a short overlay appears on the
+map. It is not a new row of chrome.
+
+![Approximate location failed](docs/media/readme/locate-fail.png)
+
+## The loop
+
+A station you arrive at fetches recent scans so there is something to play
+within a few seconds. The cache then grows toward **60 frames / two hours**.
+Older scans drop out. Space loops them; `[` `]` steps; Home and End jump.
+
+NOAA publishes Level II via the [Open Data program on AWS](https://registry.opendata.aws/noaa-nexrad/).
+A full volume takes about four to seven minutes (faster in severe weather,
+slower in clear air). While a volume is in progress the engine reads live
+chunks, so the sweep can paint as the antenna turns. If no new chunk arrives
+for 90 seconds it rediscovers the latest volume; cached frames stay.
+
+## Look
+
+Three treatments sample the same gate and palette. They only change how each
+3 px cell is painted. Glyphs is the default; `1` `2` `3` switch.
+
+| Key | Treatment | Look |
+| --- | --- | --- |
+| `1` | Pixels | Solid blocks. The most literal picture of each gate. |
+| `2` | Glyphs | A denser mark as the return strengthens. |
+| `3` | Stipple | Soft squares that grow with intensity; more map shows through. |
+
+![Pixels, Glyphs, and Stipple](docs/media/readme/treatments.png)
+
+Colors, type, and spacing come from the active Omarchy theme and follow it
+when the theme changes. Radar color comes only from the sweep.
+
+`?` lists every key. They are all rebindable.
 
 | Key | Action |
 | --- | --- |
 | `h` `j` `k` `l` or arrows | Pan |
 | `+` `-` | Zoom |
 | `0` | Reset to the configured or weather location |
-| `/` or `s` | Search sites (center and lock) |
-| `n` | Nearest site |
+| `/` or `s` | Search |
+| `n` | Nearest radar (camera stays) |
 | `Shift+L` | Lock the station |
-| `Shift+H` | Choose a location |
-| `Space` | Loop the frames |
+| `m` | My location |
+| Space | Play / pause the loop |
 | `[` `]` | Step a frame |
-| `Home` `End` | Oldest or newest frame |
+| Home / End | Oldest or newest frame |
 | `1` `2` `3` | Pixels, Glyphs, Stipple |
 | `w` | Show weak returns |
-| `?` | Keys sheet |
-| `Esc` | Close |
+| `?` | This map |
+| Esc | Close |
 
-Measured returns under 5 dBZ (insects, birds, ground clutter on a clear day)
-are hidden by default and the legend says so; `w` shows them.
+## Preferences
 
-## Configuration
-
-`~/.config/omastorm/config.toml` holds deliberate preferences. The app saves
-last map center, zoom, and UI radar lock separately in
-`$XDG_STATE_HOME/omastorm/state.json` (default
-`~/.local/state/omastorm/state.json`). Navigation never rewrites your config.
-`Shift+H`, or LOCATION, opens the location picker; it writes state, not config.
-
-Explicit center coordinates win on every launch. Without them, Omastorm
-restores your last view, then falls back to weather or the location prompt. Radar selection is independent: a configured lock wins, otherwise a
-remembered lock is restored, otherwise the nearest radar follows the map.
+`~/.config/omastorm/config.toml` is what you mean to keep. The last map
+center, zoom, and UI radar lock are saved separately in
+`~/.local/state/omastorm/state.json`. Panning never rewrites config.
 
 ```toml
 # Optional: always open here. Omit both to remember the last map position.
 center_lat = 36.23708
 center_lon = -79.97948
-# locked_radar = "KFCX" # optional radar override; coordinates do not imply a lock
+# locked_radar = "KFCX"  # optional; coordinates do not lock a radar
 
-treatment = "GLYPHS" # PIXELS, GLYPHS, or STIPPLE at launch
-weak_floor = 5       # dBZ; false draws every measured return
+treatment = "GLYPHS"  # PIXELS, GLYPHS, or STIPPLE at launch
+weak_floor = 5        # dBZ; false draws every measured return
 
 [keys]
 pan_left = "h Left"
 zoom_in = "+ ="
 ```
 
-A bad value is named in the status slot and that setting stays on its default.
-Every action name, the key syntax, and what each setting does are in
-[docs/configuration.md](docs/configuration.md).
+A bad value is named in the status slot and that setting stays on its
+default. Keys are Qt sequences; an empty string unbinds. The `1` `2` `3` and
+`w` keys change treatment and the weak-return floor for the session without
+writing the file.
 
-## Troubleshooting
-
-If the popover says UPDATED TO … · RESTART THE SHELL, or expand or the
-keybind does nothing after `omarchy plugin update`, the shell still has the
-previous QML types. Click the notice, or restart it yourself:
+## Update
 
 ```sh
+omarchy plugin update com.omastorm.radar
 omarchy restart shell
 ```
 
-The engine runs as one shared daemon per login. Its log is
-`$XDG_RUNTIME_DIR/omastorm/engine.log` (usually `/run/user/<uid>/omastorm/`).
-If live polling receives no new chunk for 90 seconds, the engine rediscovers
-the latest volume automatically, keeping cached frames available. Recovery
-attempts are recorded in `engine.log`.
+Until the restart, the shell keeps running what it loaded at login, old
+engine pin included. Omastorm notices the new files and says so; clicking
+that notice in the popover restarts the shell.
 
-If the popover says the engine could not be installed, the download or its
-sha256 check failed; the reason is in `bootstrap.log` in the same directory,
-and opening the popover again retries. To restart the engine by hand:
+## If something is wrong
+
+If expand or the keybind does nothing after an update, restart the shell.
+
+The engine is one daemon per login. Its log is
+`$XDG_RUNTIME_DIR/omastorm/engine.log` (usually `/run/user/<uid>/omastorm/`).
+If the engine could not be installed, the reason is `bootstrap.log` in the
+same directory; opening the popover again retries.
 
 ```sh
 ~/.local/share/omastorm/bin/omastorm-engine stop
 ```
 
-The next popover or window starts it again. Please attach both logs to a
-[bug report](https://github.com/wesleygrimes/omastorm/issues).
+The next popover or window starts it again.
+
+This is a beta. Bugs, rough edges, and ideas go to
+[GitHub issues](https://github.com/wesleygrimes/omastorm/issues). For a
+failure, use the
+[bug report template](https://github.com/wesleygrimes/omastorm/issues/new?template=bug-report.md)
+and attach the last screenful of `engine.log` (and `bootstrap.log` if the
+engine never installed). Include Omarchy version, plugin commit, and GPU as
+the template asks.
 
 ## Remove
 
@@ -187,49 +242,29 @@ The next popover or window starts it again. Please attach both logs to a
 omarchy plugin remove com.omastorm.radar
 ~/.local/share/omastorm/bin/omastorm-engine stop
 rm -rf ~/.local/share/omastorm ~/.cache/omastorm ~/.local/state/omastorm
-rm -rf ~/.config/omastorm                            # your config.toml; keep it to reinstall later
+rm -rf ~/.config/omastorm                            # keep this to reinstall later
 rm -f ~/.local/share/applications/omastorm.desktop   # if you added the launcher entry
 ```
 
 Then delete the `o.bind` line if you added one.
 
-## Feedback
-
-This is a beta. Bugs, rough edges, and ideas go to
-[GitHub issues](https://github.com/wesleygrimes/omastorm/issues).
-
-## Data and licenses
+## Data
 
 Radar: NOAA NEXRAD Level II via the NOAA Open Data program on AWS. Basemap: ©
 OpenStreetMap contributors, [ODbL](https://opendatacommons.org/licenses/odbl/1-0/),
 tiles by [OpenFreeMap](https://openfreemap.org); Natural Earth, public domain.
 Location search: [GeoNames](https://www.geonames.org/),
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Approximate location: [wttr.in](https://wttr.in).
 Code: MIT, see [LICENSE](LICENSE).
 
 ## Contributing
 
-This is a beta. Contributions are welcome.
-[CONTRIBUTING.md](CONTRIBUTING.md) is setup, checks, and pull requests.
-Open work that is ready for a first patch is labeled
+Setup, checks, and pull requests are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Read [DESIGN.md](DESIGN.md) before proposing a product change. Open work
+that is ready for a first patch is labeled
 [`good first issue`](https://github.com/wesleygrimes/omastorm/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 and [`help wanted`](https://github.com/wesleygrimes/omastorm/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
-
-A headless Rust engine serves GPU textures over a Unix socket. The
-Quickshell UI is the client. `manifest.json` is the Omarchy plugin.
-
-- `engine/` Rust daemon: NEXRAD decode, cache, and the socket protocol
-- `ui/` Quickshell QML for the bar popover and window
-- `scripts/` bootstrap, checks, captures, fetch, and release
-- `data/` fixture provenance, checksums, and vendored archives (`data/raw/` is extracted)
-- `golden/` decoder answer key for the archived KTLX scan
-- `docs/` protocol, configuration, and releasing
-- `site/` omastorm.com
-
-Read [DESIGN.md](DESIGN.md) before proposing a product change and
-[docs/protocol.md](docs/protocol.md) before touching the engine/client
-boundary. Maintainers cut releases with
-[docs/RELEASING.md](docs/RELEASING.md).
 
 ## Contributors
 

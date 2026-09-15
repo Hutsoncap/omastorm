@@ -44,7 +44,7 @@ capture() { # name, delay ms, env..., then ipc steps
 
 capture weather 7000 OMASTORM_CONFIG="$scratch/none.toml" OMASTORM_LOCATION="$scratch/weather.json" OMASTORM_STATE="$scratch/state-weather.json"
 capture picker 8000 OMASTORM_CONFIG="$scratch/none.toml" OMASTORM_LOCATION="$scratch/missing.json" OMASTORM_STATE="$scratch/state-picker.json" -- 'location open oklahoma'
-capture coords 8000 OMASTORM_CONFIG="$scratch/none.toml" OMASTORM_LOCATION="$scratch/missing.json" OMASTORM_STATE="$scratch/state-coords.json" -- 'location open zzzq' 'location setLat 35.4' 'location setLon -97.5'
+capture coords 8000 OMASTORM_CONFIG="$scratch/none.toml" OMASTORM_LOCATION="$scratch/missing.json" OMASTORM_STATE="$scratch/state-coords.json" -- 'location open 35.4, -97.5'
 capture locked 8000 OMASTORM_CONFIG="$scratch/locked.toml" OMASTORM_LOCATION="$scratch/missing.json" OMASTORM_STATE="$scratch/state-locked.json"
 
 cd "$review"

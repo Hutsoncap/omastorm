@@ -3,15 +3,17 @@ import QtQuick.Layouts
 import "Location.js" as Location
 import "Sites.js" as Sites
 
-// The location picker (DESIGN.md, location): engine search_places plus
-// labeled lat/lon; Enter writes state, never config. The keys are handled
-// here while it is open; the window's own shortcuts stand down.
+// `/` search (DESIGN.md): one field for a city, a site id, or pasted
+// coordinates. Enter on a place centres and unlocks; Enter on a site locks
+// and centres. The station title opens the same card on the nearest dishes.
 Item {
     id: picker
     property var theme
     property var engine
     property var session: null
+    property var sites: []
     property bool onboarding: false
+    property bool browseSites: false
     property bool manual: true
     signal manualStarted()
     property real centerLat: 0
@@ -21,15 +23,15 @@ Item {
     property bool open: false
     property bool closeOnScrim: true
     property alias query: field.text
-    property alias latText: latField.text
-    property alias lonText: lonField.text
-    readonly property bool fieldFocused: field.activeFocus || latField.activeFocus || lonField.activeFocus
+    readonly property bool fieldFocused: field.activeFocus
     property int selected: 0
-    property var results: []
+    property var placeResults: []
     property string pendingQuery: ""
+    property string settledQuery: ""
     readonly property int limit: 4
-    readonly property var coordEntry: Location.parseCoordFields(latText, lonText)
-    readonly property string coordError: coordEntry.error || ""
+    readonly property var coordEntry: Location.parseCoordQuery(settledQuery)
+    readonly property string coordError: coordEntry && coordEntry.error ? coordEntry.error : ""
+    readonly property bool metric: Qt.locale().measurementSystem === Locale.MetricSystem
     component Word: Text {
         color: picker.theme.foreground
         font.family: picker.theme.font
@@ -37,87 +39,114 @@ Item {
         elide: Text.ElideRight
         verticalAlignment: Text.AlignVCenter
     }
-    signal chosen(real lat, real lon, string name)
-    readonly property var rows: {
+    signal chosen(var row)
+    readonly property var siteRanked: {
+        if (!open || !sites || !sites.length) return { rows: [], total: 0 };
+        return Sites.rank(sites, settledQuery, centerLat, centerLon, picker.limit, picker.metric);
+    }
+    readonly property var siteRows: {
         var out = [];
-        for (var p of results) {
+        for (var r of siteRanked.rows) {
+            out.push({
+                kind: "site", site: r.site, name: r.site.id, where: r.where,
+                label: r.site.id, lat: r.site.lat, lon: r.site.lon,
+                place: r.place, idHits: r.idHits, placeHits: r.placeHits
+            });
+        }
+        return out;
+    }
+    readonly property var placeRows: {
+        var out = [];
+        for (var p of placeResults) {
             var bits = [];
             if (p.region) bits.push(p.region);
             if (p.country && p.country !== "-99") bits.push(p.country);
             var where = bits.join(", ");
             if (!where) {
                 var km = Location.validPair(centerLat, centerLon) ? Location.distanceKm(centerLat, centerLon, p.lat, p.lon) : 0;
-                where = Location.validPair(centerLat, centerLon) ? Sites.where(km, Sites.bearingDeg(centerLat, centerLon, p.lat, p.lon), Qt.locale().measurementSystem === Locale.MetricSystem) : (p.class || "").toUpperCase();
+                where = Location.validPair(centerLat, centerLon) ? Sites.where(km, Sites.bearingDeg(centerLat, centerLon, p.lat, p.lon), picker.metric) : (p.class || "").toUpperCase();
             }
-            out.push({ name: p.name, lat: p.lat, lon: p.lon, kind: p.class || "place",
-                       where: where, label: p.region ? p.name + ", " + p.region : p.name });
-            if (out.length >= limit) break;
+            out.push({
+                kind: "place", name: p.name, lat: p.lat, lon: p.lon,
+                where: where, label: p.region ? p.name + ", " + p.region : p.name
+            });
         }
         return out;
+    }
+    readonly property var rows: {
+        if (!open || (onboarding && !manual)) return [];
+        return Location.mergeSearch(siteRows, placeRows, coordEntry, settledQuery, browseSites, picker.limit);
     }
     visible: open
     function show(text, offerLocation) {
         onboarding = offerLocation === true;
+        browseSites = offerLocation === "sites";
         manual = !onboarding;
         if (manual) manualStarted();
         field.text = text || "";
-        latField.text = "";
-        lonField.text = "";
         selected = 0;
-        results = [];
+        placeResults = [];
+        pendingQuery = "";
         open = true;
         Qt.callLater(() => { if (manual) { field.cursorPosition = field.length; field.forceActiveFocus(); } });
-        search.restart();
+        applyQuery();
     }
     function close() {
+        settle.stop();
         open = false;
         field.text = "";
-        latField.text = "";
-        lonField.text = "";
         selected = 0;
-        results = [];
+        placeResults = [];
+        pendingQuery = "";
+        settledQuery = "";
         field.focus = false;
-        latField.focus = false;
-        lonField.focus = false;
     }
     function accept() {
-        if (!open) return;
-        if (coordEntry.lat !== undefined) { var lat = coordEntry.lat, lon = coordEntry.lon; close(); chosen(lat, lon, ""); return; }
-        if (coordError || !rows.length) return;
+        applyQuery();
+        if (!open || coordError || !rows.length) return;
         var row = rows[Math.min(selected, rows.length - 1)];
         close();
-        chosen(row.lat, row.lon, row.label);
+        chosen(row);
     }
     function move(delta) { selected = Math.max(0, Math.min(rows.length - 1, selected + delta)); }
-    function tab(back) {
-        var order = [field, latField, lonField], i = 0;
-        for (; i < order.length; i++) if (order[i].activeFocus) break;
-        if (i >= order.length) i = 0;
-        order[back ? (i + order.length - 1) % order.length : (i + 1) % order.length].forceActiveFocus();
+    function go(lat, lon, name) {
+        close();
+        chosen({ kind: "place", lat: lat, lon: lon, name: name || "", label: name || "" });
     }
-    function go(lat, lon, name) { close(); chosen(lat, lon, name || ""); }
-    onQueryChanged: { selected = 0; search.restart(); }
-    Timer {
-        id: search
-        interval: 120
-        onTriggered: {
-            if (!picker.open || !picker.engine) return;
-            var q = picker.query.trim();
-            if (!q) { picker.results = []; return; }
-            picker.pendingQuery = q;
-            var cmd = {type: "search_places", query: q};
-            if (Location.validPair(picker.centerLat, picker.centerLon)) {
-                cmd.lat = picker.centerLat;
-                cmd.lon = picker.centerLon;
-            }
-            picker.engine.send(cmd);
+    function applyQuery() {
+        settle.stop();
+        settledQuery = query;
+        if (!open || !engine || (onboarding && !manual)) return;
+        var q = settledQuery.trim();
+        var coord = Location.parseCoordQuery(q);
+        if (!q || (coord && coord.lat !== undefined) || (coord && coord.error)) {
+            placeResults = [];
+            pendingQuery = "";
+            return;
         }
+        pendingQuery = q;
+        var cmd = {type: "search_places", query: q};
+        if (Location.validPair(centerLat, centerLon)) {
+            cmd.lat = centerLat;
+            cmd.lon = centerLon;
+        }
+        engine.send(cmd);
+    }
+    onQueryChanged: {
+        selected = 0;
+        if (!String(query).trim()) applyQuery();
+        else settle.restart();
+    }
+    Timer {
+        id: settle
+        interval: 100
+        onTriggered: picker.applyQuery()
     }
     Connections {
         target: picker.engine
         function onPlacesReady(message) {
             if (!picker.open || message.query !== picker.pendingQuery) return;
-            picker.results = message.results || [];
+            picker.placeResults = message.results || [];
         }
     }
     Rectangle {
@@ -202,10 +231,6 @@ Item {
                                 else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { picker.accept(); event.accepted = true; }
                                 else if (event.key === Qt.Key_Up) { picker.move(-1); event.accepted = true; }
                                 else if (event.key === Qt.Key_Down) { picker.move(1); event.accepted = true; }
-                                else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
-                                    picker.tab(event.key === Qt.Key_Backtab || !!(event.modifiers & Qt.ShiftModifier));
-                                    event.accepted = true;
-                                }
                                 else if (event.key === Qt.Key_U && event.modifiers === Qt.ControlModifier) { field.text = ""; event.accepted = true; }
                             }
                             Rectangle {
@@ -216,65 +241,7 @@ Item {
                                 opacity: .9
                             }
                         }
-                        Word { text: "place"; font.pixelSize: 10; opacity: .45; visible: !picker.compact }
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 10
-                    Word { text: "LAT"; font.pixelSize: 10; opacity: .55; Layout.preferredWidth: 28 }
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: 28
-                        color: Qt.alpha(picker.theme.foreground, .04)
-                        border.width: 1
-                        border.color: Qt.alpha(picker.theme.foreground, .4)
-                        TextInput {
-                            id: latField
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            color: picker.theme.foreground
-                            font.family: picker.theme.font
-                            font.pixelSize: 12
-                            verticalAlignment: TextInput.AlignVCenter
-                            clip: true
-                            Keys.onPressed: event => {
-                                if (event.key === Qt.Key_Escape) { picker.close(); event.accepted = true; }
-                                else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { picker.accept(); event.accepted = true; }
-                                else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
-                                    picker.tab(event.key === Qt.Key_Backtab || !!(event.modifiers & Qt.ShiftModifier));
-                                    event.accepted = true;
-                                }
-                            }
-                        }
-                    }
-                    Word { text: "LON"; font.pixelSize: 10; opacity: .55; Layout.preferredWidth: 28 }
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: 28
-                        color: Qt.alpha(picker.theme.foreground, .04)
-                        border.width: 1
-                        border.color: Qt.alpha(picker.theme.foreground, .4)
-                        TextInput {
-                            id: lonField
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            color: picker.theme.foreground
-                            font.family: picker.theme.font
-                            font.pixelSize: 12
-                            verticalAlignment: TextInput.AlignVCenter
-                            clip: true
-                            Keys.onPressed: event => {
-                                if (event.key === Qt.Key_Escape) { picker.close(); event.accepted = true; }
-                                else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { picker.accept(); event.accepted = true; }
-                                else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
-                                    picker.tab(event.key === Qt.Key_Backtab || !!(event.modifiers & Qt.ShiftModifier));
-                                    event.accepted = true;
-                                }
-                            }
-                        }
+                        Word { text: "city · site · coordinates"; font.pixelSize: 10; opacity: .45; visible: !picker.compact }
                     }
                 }
                 ColumnLayout {
@@ -287,6 +254,7 @@ Item {
                             required property var modelData
                             required property int index
                             readonly property bool current: index === picker.selected
+                            readonly property bool isSite: !!(modelData && modelData.kind === "site")
                             readonly property color ink: current ? picker.theme.accent : picker.theme.foreground
                             Layout.fillWidth: true
                             implicitHeight: 28
@@ -296,8 +264,37 @@ Item {
                                 anchors.leftMargin: 12
                                 anchors.rightMargin: 12
                                 spacing: 12
-                                Word { text: row.modelData.name; font.bold: true; color: row.ink; Layout.fillWidth: true }
-                                Word { text: row.modelData.where; font.pixelSize: 10; color: row.ink; opacity: .6 }
+                                Word {
+                                    visible: row.isSite
+                                    text: row.isSite ? Sites.mark(row.modelData.name, row.modelData.idHits || [], picker.theme.accent) : ""
+                                    textFormat: Text.StyledText
+                                    font.bold: true
+                                    color: row.ink
+                                    Layout.preferredWidth: 52
+                                }
+                                Word {
+                                    text: row.isSite
+                                        ? Sites.mark(row.modelData.place || "", row.modelData.placeHits || [], picker.theme.accent)
+                                        : (row.modelData.label || row.modelData.name || "")
+                                    textFormat: row.isSite ? Text.StyledText : Text.PlainText
+                                    font.bold: !row.isSite
+                                    color: row.ink
+                                    opacity: row.isSite ? .9 : 1
+                                    Layout.fillWidth: true
+                                }
+                                Word {
+                                    text: (row.modelData && row.modelData.where) || ""
+                                    font.pixelSize: 10
+                                    color: row.ink
+                                    opacity: .6
+                                }
+                                Word {
+                                    text: row.isSite ? "site" : "place"
+                                    font.pixelSize: 10
+                                    color: row.ink
+                                    opacity: .45
+                                    font.letterSpacing: 1
+                                }
                             }
                             MouseArea {
                                 anchors.fill: parent
@@ -308,29 +305,23 @@ Item {
                         }
                     }
                     Word {
-                        visible: !!picker.coordError
-                        text: picker.coordError.toUpperCase()
-                        color: picker.theme.accent
-                        Layout.fillWidth: true; Layout.leftMargin: 12; Layout.preferredHeight: 28; font.letterSpacing: 1
-                    }
-                    Word {
-                        visible: !picker.coordError && picker.coordEntry.lat !== undefined
-                        text: picker.coordEntry.lat === undefined ? "" : "↵ GO TO " + picker.coordEntry.lat.toFixed(4) + ", " + picker.coordEntry.lon.toFixed(4)
-                        Layout.fillWidth: true; Layout.leftMargin: 12; Layout.preferredHeight: 28; opacity: .55; font.letterSpacing: 1
-                    }
-                    Word {
-                        visible: !picker.coordError && picker.coordEntry.lat === undefined && !picker.rows.length
-                        text: picker.query.trim() ? "NO PLACE MATCHES · TRY COORDINATES" : "TOWNS OF 5,000+ PEOPLE, OR ENTER LATITUDE AND LONGITUDE"
-                        Layout.fillWidth: true; Layout.leftMargin: 12; Layout.preferredHeight: 28; opacity: .55; font.letterSpacing: 1
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12
+                        Layout.preferredHeight: 28
+                        visible: !picker.rows.length
+                        text: picker.coordError ? picker.coordError.toUpperCase()
+                            : picker.settledQuery.trim() ? "NO MATCHES" : "CITY, SITE ID, OR LAT, LON"
+                        color: picker.coordError ? picker.theme.accent : picker.theme.foreground
+                        opacity: picker.coordError ? 1 : .55
+                        font.letterSpacing: 1
                     }
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: Qt.alpha(picker.theme.foreground, .17) }
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 14
-                    Word { text: "tab fields"; font.pixelSize: 10; opacity: .55; visible: !picker.compact }
                     Word { text: "↑ ↓ move"; font.pixelSize: 10; opacity: .55 }
-                    Word { text: "↵ set location"; font.pixelSize: 10; opacity: .55 }
+                    Word { text: "↵ go"; font.pixelSize: 10; opacity: .55 }
                     Word { text: "esc close"; font.pixelSize: 10; opacity: .55; visible: !picker.compact }
                     Item { Layout.fillWidth: true }
                     Word { text: picker.rows.length ? picker.rows.length + " shown" : ""; font.pixelSize: 10; opacity: .55 }

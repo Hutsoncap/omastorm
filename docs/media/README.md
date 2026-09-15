@@ -1,31 +1,32 @@
 # README media
 
-The pictures the README shows are not in the repository. The plugin is a full
-clone of this repository, so media travels as assets on the plugin's GitHub
-Release (`v0.1.0`), and the README links to them by URL.
-
-Regenerate from a working desktop OpenGL session:
+User-facing stills live in `readme/` and are committed so GitHub can render
+the README. Working takes (the demo video, ad-hoc stills) stay gitignored in
+this directory.
 
 ```sh
-bash scripts/capture-readme.sh   # window-live.png, popover.png (live KTLX)
-bash scripts/capture-demo.sh     # omastorm-demo.mp4 and omastorm-preview.gif (live KJAX; SITE=KXXX for another)
+bash scripts/capture-readme.sh
 ```
 
-Both write into this directory, which is ignored except for this file. They
-use isolated daemons and change no desktop or system configuration. FFmpeg is
-required; the demo also needs Ruby for its temporary harness. Frames are
-grabbed as the scene settles, so the video runs a little faster than real
-time and is not a latency measurement.
+Isolated daemons, no login plugin, no desktop config. Needs a working desktop
+OpenGL session. Stills are 640×480 (above the window's compact breakpoint).
+Writes:
 
-- `omastorm-demo.mp4`: one live take, about 37 s, 1280×720, H.264, no audio:
-  the home view, the loop, a pan and zoom to the coast, the three
-  treatments, weak returns, the picker switching station, the keys sheet.
-- `omastorm-preview.gif`: the home view and the zoom, cut from the video.
-- `window-live.png`, `popover.png`: live KTLX with the actual scan time.
+| File | What it is |
+| --- | --- |
+| `readme/window.png` | Live window, Glyphs |
+| `readme/popover.png` | Bar popover, Glyphs |
+| `readme/onboard.png` | First-run location prompt |
+| `readme/search-city.png` | Search, city query |
+| `readme/search-site.png` | Search, site id |
+| `readme/search-coords.png` | Search, pasted coordinates |
+| `readme/search-error.png` | Search, latitude out of range |
+| `readme/locate-fail.png` | Approximate-location overlay |
+| `readme/treatments.png` | Pixels, Glyphs, Stipple side by side |
 
-Upload only the generated media files with `gh release upload <tag> <files...>`
-and point the README URLs at that tag. For immutable releases, upload media
-while the release is still a draft; published assets cannot be replaced.
+`bash scripts/capture-demo.sh` still writes `omastorm-demo.mp4` and
+`omastorm-preview.gif` here for omastorm.com; those are not in the README
+until the take is recut against the current keys.
 
 Radar: NOAA NEXRAD. Map: © OpenStreetMap contributors
 ([ODbL](https://opendatacommons.org/licenses/odbl/1-0/)); Natural Earth, public

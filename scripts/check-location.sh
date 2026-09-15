@@ -63,14 +63,12 @@ panned_lon=$(field lon)
 call run reset
 until_field lon -79.979
 [[ $panned_lon != -79.979 ]] || fail "pan_left did not move the camera"
-# Location picker: labeled lat/lon fields write state; a bad latitude is named.
-quickshell ipc --pid "$pid" call location open ""
+# Location picker: pasted coordinates write state; a bad latitude is named.
+quickshell ipc --pid "$pid" call location open "95, -97.5"
 for _ in {1..30}; do [[ $(quickshell ipc --pid "$pid" call location status | grep -o '"open":[a-z]*' | cut -d: -f2) == true ]] && break; sleep .1; done
-quickshell ipc --pid "$pid" call location setLat 95
-quickshell ipc --pid "$pid" call location setLon -97.5
 err=$(quickshell ipc --pid "$pid" call location status)
 [[ $err == *latitude* ]] || fail "Invalid latitude was not named: $err"
-quickshell ipc --pid "$pid" call location setLat 35.4
+quickshell ipc --pid "$pid" call location open "35.4, -97.5"
 quickshell ipc --pid "$pid" call location accept
 until_field lat 35.4
 until_field lon -97.5

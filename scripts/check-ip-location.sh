@@ -65,6 +65,7 @@ ShellRoot {
         s.needsLocation = false;
         s.ipLocationDismissed = true;
         s.locationPending = false;
+        s.locateKind = "";
         s.locationError = "";
         s.appliedExplicit = null;
         s.config.values = values;
@@ -106,6 +107,18 @@ ShellRoot {
                 assertThat(Location.parseWttrHome('{"nearest_area":[{"latitude":"91","longitude":"0"}]}') === null, "reject bad wttr coords");
                 assertThat(Location.parseWttrHome('{"nearest_area":[{"latitude":null,"longitude":null}]}') === null, "reject null wttr coords");
                 assertThat(Location.parseWttrHome('{"nearest_area":[{"latitude":"","longitude":""}]}') === null, "reject blank wttr coords");
+                var coords = Location.parseCoordQuery("36.23708, -79.97948");
+                assertThat(coords && coords.lat === 36.23708 && coords.lon === -79.97948, "comma pair");
+                assertThat(Location.parseCoordQuery("36.23708 -79.97948").lat === 36.23708, "space pair");
+                assertThat(Location.parseCoordQuery("95, -97.5").error, "lat out of range");
+                assertThat(Location.parseCoordQuery("oklahoma") === null, "city is not coords");
+                assertThat(Location.looksLikeSiteId("kfcx") && Location.looksLikeSiteId("tlx") && !Location.looksLikeSiteId("tulsa"), "site id heuristic");
+                var mixed = Location.mergeSearch(
+                    [{kind: "site", name: "KINX"}], [{kind: "place", name: "Tulsa"}], null, "tulsa", false, 4);
+                assertThat(mixed[0].name === "Tulsa", "places first for a city");
+                var sitesFirst = Location.mergeSearch(
+                    [{kind: "site", name: "KFCX"}], [{kind: "place", name: "X"}], null, "kfcx", false, 4);
+                assertThat(sitesFirst[0].name === "KFCX", "sites first for a site id");
 
                 fresh({}, "", null);
                 assertThat(!s.locating && s.needsLocation && !s.locationPending, "startup requires consent");
@@ -206,6 +219,22 @@ ShellRoot {
         s.requestIpLocation();
         assertThat(s.needsLocation && !s.locationPending, "archive never locates");
         assertThat(s.config.parseLocation('{"latitude":null,"longitude":null}') === null, "null weather is not zero");
+
+        fresh({}, '{"lat":36.23708,"lon":-79.97948,"span":210,"name":"Stokesdale"}', {lat:36.23708, lon:-79.97948, name:"Stokesdale"});
+        assertThat(s.hasView && s.centerLat === 36.23708, "locate starts from a view");
+        s.requestApproximateLocation("locate");
+        assertThat(s.locateKind === "locate" && s.locationPending, "locate fetch");
+        waitSettled(afterLocate);
+    }
+    function afterLocate() {
+        var s = PluginSession;
+        assertThat(s.centerLat === 41.05 && s.centerLon === -73.54, "locate recenters");
+        assertThat(s.locationSource === "ip" && !s.lockWanted, "locate unlocks nearest");
+        assertThat(s.span === 210, "locate keeps zoom");
+        s.requestApproximateLocation("locate");
+        s.setPlace(30, -81, "Picked");
+        s.finishIpLocation(0, '{"nearest_area":[{"areaName":[{"value":"Late"}],"latitude":"41.05","longitude":"-73.54"}]}', s.locateAttempt);
+        assertThat(s.centerLat === 30 && s.placeName === "Picked", "late locate after picker");
         console.log("IP_LOCATION_PASSED");
         Qt.quit();
     }
