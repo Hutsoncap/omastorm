@@ -164,4 +164,7 @@ Live is now. Archive is a finished scan or a past day.
 ## HTTP
 
 One client for archive list, range-get, chunk list, and chunk get.
-Unsigned HTTPS. Timeouts on every call.
+Unsigned HTTPS. Timeouts on every call. Each body is streamed with a hard
+byte cap, including when Content-Length is missing or wrong: listings stop
+at 1 MiB, the archive header keeps only the 24 bytes requested, and chunk
+objects stop at 16 MiB. Overflow is rejected before those bytes are retained.
