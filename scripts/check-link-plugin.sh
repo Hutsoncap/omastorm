@@ -34,7 +34,7 @@ rg -q 'link-plugin.sh --rescan' run.sh \
 if rg -q 'link-plugin' scripts/fetch-engine.sh scripts/write-desktop-entry.sh; then
   fail 'an installer references link-plugin.sh'
 fi
-if rg -q 'OMASTORM_RESCAN_PLUGIN' scripts/check.sh scripts/capture-*.sh; then
+if rg -q 'OMASTORM_RESCAN_PLUGIN=' scripts/check.sh scripts/capture-*.sh; then
   fail 'check or capture sets OMASTORM_RESCAN_PLUGIN'
 fi
 [[ ! -e $target && ! -L $target ]] || fail 'Scratch already had the plugin path'

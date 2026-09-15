@@ -27,8 +27,8 @@ downloads the pinned engine from GitHub Releases, checks its sha256, and
 installs it under `~/.local/share/omastorm/bin`. Configuration, remembered
 view, and cached scans stay in Omastorm's own directories.
 
-Optional: a Hyprland key to toggle the window (Omastorm never writes this
-file):
+Optional: a Hyprland key to toggle the window. Add one line to
+`~/.config/hypr/bindings.lua`. Omastorm never writes that file:
 
 ```lua
 o.bind("SUPER + SHIFT + R", "Omastorm", "omarchy shell shell toggle com.omastorm.radar '{}'")
