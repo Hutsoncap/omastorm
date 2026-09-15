@@ -12,14 +12,13 @@
 //! lowest-cut chunks once, so the last complete lowest sweep shows within
 //! seconds of selecting a station and the next volume paints live. Every
 //! network call sits under a `tokio::time::timeout`, since the client sets
-//! none. The bucket is public and needs no credentials; nothing here runs
-//! until a client selects a station, so launch still fetches nothing.
+//! none, and each body is streamed with a hard byte cap. The bucket is
+//! public and needs no credentials; nothing here runs until a client
+//! selects a station, so launch still fetches nothing.
 
 use crate::{live_index, sweep::Sweep};
 use chrono::{NaiveDateTime, SecondsFormat, TimeDelta, Utc};
-use nexrad_data::aws::realtime::{
-    Chunk, ChunkIdentifier, ChunkType, DownloadedChunk, VolumeIndex, download_chunk,
-};
+use nexrad_data::aws::realtime::{Chunk, ChunkIdentifier, ChunkType, DownloadedChunk, VolumeIndex};
 use nexrad_data::result::{Error, aws::AWSError};
 use nexrad_data::volume::Record;
 use nexrad_model::data::{Radial, RadialStatus};
@@ -323,10 +322,27 @@ impl Failures {
 
 /// Download one dated chunk; caller bounds the whole operation with a timeout.
 async fn fetch(site: &str, id: &ChunkIdentifier) -> Result<DownloadedChunk, Error> {
-    let (identifier, chunk) = download_chunk(site, id).await?;
+    let key = format!("{}/{}/{}", site, id.volume().as_number(), id.name());
+    let url = format!("https://{BUCKET}.s3.amazonaws.com/{key}");
+    let response = live_index::http_client()
+        .get(&url)
+        .send()
+        .await
+        .map_err(AWSError::S3GetObjectRequest)?;
+    let data = match response.status() {
+        reqwest::StatusCode::NOT_FOUND => {
+            return Err(Error::AWS(AWSError::S3ObjectNotFound));
+        }
+        reqwest::StatusCode::OK => live_index::take_body(response, live_index::CHUNK_MAX)
+            .await
+            .map_err(io::Error::other)?,
+        status => {
+            return Err(Error::AWS(AWSError::S3GetObject(Some(status.to_string()))));
+        }
+    };
     Ok(DownloadedChunk {
-        identifier,
-        chunk,
+        identifier: id.clone(),
+        chunk: Chunk::new(data)?,
         attempts: 1,
     })
 }
@@ -468,7 +484,7 @@ async fn backfill(site: String, events: Sender<Event>, join: live_index::Join, c
         let name = format!("{site}/{:03}", volume.as_number());
         let mut assembler = Assembler::default();
         for id in ids.iter().take(BACKFILL_CHUNKS) {
-            let (identifier, chunk) = match timeout(CALL_TIMEOUT, download_chunk(&site, id)).await {
+            let chunk = match timeout(CALL_TIMEOUT, fetch(&site, id)).await {
                 Ok(Ok(got)) => got,
                 Ok(Err(e)) => {
                     live_log(&site, format_args!("backfill {}: {e}", id.name()));
@@ -479,15 +495,15 @@ async fn backfill(site: String, events: Sender<Event>, join: live_index::Join, c
                     break;
                 }
             };
-            let radials = match radials_of(&chunk) {
+            let radials = match radials_of(&chunk.chunk) {
                 Ok(radials) => radials,
                 Err(e) => {
                     live_log(&site, format_args!("backfill {}: {e}", id.name()));
                     break;
                 }
             };
-            let starts = matches!(chunk, Chunk::Start(_));
-            let update = match assembler.feed(starts, &name, identifier.name(), radials) {
+            let starts = matches!(chunk.chunk, Chunk::Start(_));
+            let update = match assembler.feed(starts, &name, chunk.identifier.name(), radials) {
                 Ok(update) => update,
                 Err(e) => {
                     live_log(&site, format_args!("backfill {}: {e}", id.name()));

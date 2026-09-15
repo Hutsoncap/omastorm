@@ -56,7 +56,8 @@ A background backfill fetches up to twelve earlier volumes, skipping cached ones
 Backfill reads the day's archive listing and each file's header for its slot.
 SAILS and MRLE extra low-level cuts are not separate frames.
 
-The poller bounds requests with timeouts and retries with backoff. Four
+The poller bounds requests with timeouts, a streamed byte cap on each body,
+and retries with backoff. Four
 failed chunk fetches without a chunk in between restart discovery, and two
 report offline; a connection reset while connecting counts toward the
 restart but not toward offline. An empty listing is normal between chunks,
