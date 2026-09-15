@@ -36,6 +36,8 @@ BarWidget {
             Item {
                 RadarMark { anchors.centerIn: parent; ink: button.foreground; opacity: root.live ? 1 : .6 }
                 Rectangle { anchors.right: parent.right; anchors.bottom: parent.bottom; width: 5; height: 5; color: Color.urgent; visible: root.down }
+                // An update waiting on a shell restart; the popover names it.
+                Rectangle { anchors.right: parent.right; anchors.bottom: parent.bottom; width: 5; height: 5; color: Color.accent; visible: !root.down && root.session.updatePending }
             }
         }
         onPressed: b => { if (b === Qt.LeftButton) { if (root.opened) root.close(); else root.open(); } }

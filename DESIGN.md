@@ -147,7 +147,10 @@ uniforms. The engine reads neither `config.toml` nor `state.json`; the UI
 resolves preferences and remembered state, then sends commands.
 
 New settings are optional, omit means default, and a bad value is named in
-the status slot. Keep deliberate settings in `config.toml` and session restore in `state.json`.
+the status slot. A plugin update the shell has not loaded yet is named there
+too, and in the popover, where the notice restarts the shell on click; the
+shell's rescan keeps the loaded QML, so nothing else can apply it.
+Keep deliberate settings in `config.toml` and session restore in `state.json`.
 The app never rewrites config because the user pans, zooms, or changes a lock.
 Write `state.json` atomically. See [configuration](docs/configuration.md) for
 file ownership and precedence. Do not write Omarchy, Hyprland, or system

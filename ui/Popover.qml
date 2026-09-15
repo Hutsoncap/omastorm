@@ -168,6 +168,17 @@ FocusScope {
                 }
             }
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: card.expandRequested() }
+            // An update is on disk but this shell still runs the old plugin;
+            // the click restarts the shell (PluginSession.updatePending).
+            Rectangle {
+                anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 8
+                visible: card.session.updatePending
+                implicitWidth: updated.implicitWidth + 10; implicitHeight: 20
+                color: Qt.alpha(card.theme.background, .92)
+                border.color: card.theme.accent
+                Label { id: updated; anchors.centerIn: parent; font.pixelSize: 10; color: card.theme.accent; text: card.session.updateNotice }
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: card.session.restartShell() }
+            }
             Label {
                 anchors.centerIn: parent; width: parent.width - 24; wrapMode: Text.Wrap
                 horizontalAlignment: Text.AlignHCenter

@@ -10,8 +10,17 @@ export XDG_RUNTIME_DIR="$scratch/r" XDG_CACHE_HOME="$scratch/cache"
 export QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=rhi QSG_RHI_BACKEND=opengl
 export OMASTORM_CONFIG="$scratch/config.toml"
 export OMASTORM_STATE="$scratch/state.json"
-export OMASTORM_ROOT="$PWD"
-mkdir -p "$XDG_RUNTIME_DIR"
+# A scratch plugin root, so the update notice can be driven by rewriting its
+# manifest; run.sh there hands off to this checkout's.
+export OMASTORM_ROOT="$scratch/root"
+mkdir -p "$XDG_RUNTIME_DIR" "$OMASTORM_ROOT"
+cp manifest.json "$OMASTORM_ROOT/manifest.json"
+printf '#!/usr/bin/env bash\nexec bash %q "$@"\n' "$PWD/run.sh" > "$OMASTORM_ROOT/run.sh"
+manifest_version() { jq -r .version manifest.json; }
+set_manifest_version() { # version: replaced whole, as a git fast-forward does
+  jq --arg v "$1" '.version = $v' manifest.json > "$OMASTORM_ROOT/manifest.next"
+  mv "$OMASTORM_ROOT/manifest.next" "$OMASTORM_ROOT/manifest.json"
+}
 : > "$OMASTORM_CONFIG"
 jq -c '.sites[] | select(.id=="KTLX") | {lat, lon, span: 210}' engine/data/sites.json > "$OMASTORM_STATE"
 pid=
@@ -106,6 +115,14 @@ call expand
 until_status '.playing and .windowPlaying and .site == "KTLX"'
 call closeWindow
 until_status '.window == false and .site == "KTLX"'
+# An update on disk that the shell has not loaded: the manifest's version
+# moves away from the loaded one and the notice names it; back to the loaded
+# version (a rolled-back update) and it goes.
+until_status '.updatePending == false and .updateNotice == ""'
+set_manifest_version 9.9.9
+until_status '.updatePending and .updateNotice == "UPDATED TO 9.9.9 · RESTART THE SHELL"'
+set_manifest_version "$(manifest_version)"
+until_status '.updatePending == false'
 # A stopped daemon followed by ensure must reconnect all surviving clients.
 # Reconnect keeps the session lock and camera; this process never unlocked,
 # so KFCX is selected again.
@@ -117,4 +134,4 @@ call quit
 wait "$pid"
 pid=
 if rg 'Binding loop|ReferenceError|TypeError|Unable to assign|Failed to load' "$scratch/ui.log"; then fail 'QML runtime errors'; fi
-echo 'Popover: archived provenance, expand preservation, treatment sharing, close/reopen, playback, lock, daemon restart PASS'
+echo 'Popover: archived provenance, expand preservation, treatment sharing, close/reopen, playback, lock, update notice, daemon restart PASS'

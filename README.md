@@ -71,7 +71,17 @@ To list Omastorm in the app launcher:
 bash ~/.config/omarchy/plugins/com.omastorm.radar/scripts/write-desktop-entry.sh
 ```
 
-Update with `omarchy plugin update com.omastorm.radar`.
+Update, then restart the shell so it loads the new files:
+
+```sh
+omarchy plugin update com.omastorm.radar
+omarchy restart shell
+```
+
+Until the restart, the shell keeps running the plugin it loaded at login, old
+engine pin included. Omastorm notices the update on disk and says so in the
+popover and the window; clicking that notice in the popover restarts the
+shell.
 
 ## Use
 
@@ -146,8 +156,9 @@ Every action name, the key syntax, and what each setting does are in
 
 ## Troubleshooting
 
-If expand or the keybind does nothing after `omarchy plugin update`, the
-shell still has the previous QML types. Restart it:
+If the popover says UPDATED TO … · RESTART THE SHELL, or expand or the
+keybind does nothing after `omarchy plugin update`, the shell still has the
+previous QML types. Click the notice, or restart it yourself:
 
 ```sh
 omarchy restart shell

@@ -435,6 +435,32 @@ QtObject {
         Quickshell.execDetached(["env", "-C", Quickshell.env("HOME"), "OMASTORM_BOOTSTRAP_LOG=" + bootstrapLog, "bash", root + "/run.sh", "--ensure"]);
     }
     property Timer bootstrapRetry: Timer { interval: 20000; repeat: true; running: !session.engine.state; onTriggered: session.bootstrap() }
+    // `omarchy plugin update` fast-forwards the clone and the shell rescans,
+    // but the rescan keeps this singleton and its compiled QML, so the bar,
+    // the popover, and the window keep running what was loaded, and this
+    // bootstrap never re-runs for a new engine pin, until the shell restarts
+    // (README, troubleshooting). Watch the manifest: a version other than the
+    // one loaded means an update is on disk and waiting.
+    property string loadedVersion: ""
+    property string installedVersion: ""
+    readonly property bool updatePending: !!loadedVersion && !!installedVersion && installedVersion !== loadedVersion
+    readonly property string updateNotice: updatePending ? "UPDATED TO " + installedVersion + " · RESTART THE SHELL" : ""
+    function restartShell() {
+        Quickshell.execDetached(["omarchy", "restart", "shell"]);
+    }
+    property FileView manifestFile: FileView {
+        path: session.root + "/manifest.json"
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            var version = "";
+            try { version = String(JSON.parse(text()).version || ""); } catch (e) { return; }
+            if (!version) return;
+            if (!session.loadedVersion) session.loadedVersion = version;
+            session.installedVersion = version;
+        }
+    }
     property FileView bootstrapLogFile: FileView {
         path: session.bootstrapLog
         watchChanges: true

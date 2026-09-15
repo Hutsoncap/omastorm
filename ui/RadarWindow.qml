@@ -630,7 +630,7 @@ Item {
             LabelText {
                 Layout.fillWidth: true
                 Layout.topMargin: -4
-                text: engine.rejection || app.configError || store.persistError || app.notice
+                text: engine.rejection || app.configError || store.persistError || app.notice || store.updateNotice
                 color: app.theme.accent
                 opacity: 1
                 visible: text !== ""

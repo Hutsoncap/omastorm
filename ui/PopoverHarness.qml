@@ -51,7 +51,8 @@ ShellRoot {
                 connected: popover.engine.socket.connected, retry: popover.engine.reconnect.running, transport: popover.engine.error, condition: popover.condition, text: popover.statusText, expanded: harness.expanded,
                 window: panel.opened, windowSite: panel.siteId, windowFrame: panel.scan ? panel.scan.id : "",
                 windowPlaying: panel.playing, windowTreatment: panel.treatment, error: session.startupError,
-                needsLocation: session.needsLocation, lat: session.centerLat, lon: session.centerLon});
+                needsLocation: session.needsLocation, lat: session.centerLat, lon: session.centerLon,
+                updatePending: session.updatePending, updateNotice: session.updateNotice});
         }
         function capture(path: string): void { picture.grabToImage(result => result.saveToFile(path)); }
         function quit(): void { Qt.quit(); }
