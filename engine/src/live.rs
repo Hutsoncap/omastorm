@@ -20,10 +20,11 @@ use chrono::{NaiveDateTime, SecondsFormat, TimeDelta, Utc};
 use nexrad_data::aws::realtime::{
     Chunk, ChunkIdentifier, ChunkType, DownloadedChunk, VolumeIndex, download_chunk,
 };
-use nexrad_data::result::Error;
+use nexrad_data::result::{Error, aws::AWSError};
 use nexrad_data::volume::Record;
 use nexrad_model::data::{Radial, RadialStatus};
 use std::collections::VecDeque;
+use std::io;
 use std::time::Duration;
 use tokio::{
     sync::mpsc::Sender,
@@ -39,9 +40,10 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Between empty polls. Chunks land every 4–12 s.
 const IDLE: Duration = Duration::from_secs(2);
 /// After a failed call; doubles up to the maximum while the bucket stays
-/// unreachable. One failure is retried quietly (a pooled connection the
-/// bucket closed, say); the second in a row reports `offline`, and this
-/// many start over from discovery.
+/// unreachable. One failure is retried quietly; the second in a row reports
+/// `offline`, and this many start over from discovery. A connection reset
+/// while connecting counts toward the restart but not toward `offline`: on
+/// its own it says nothing about the feed.
 const BACK_OFF: Duration = Duration::from_secs(5);
 const MAX_BACK_OFF: Duration = Duration::from_secs(60);
 const OFFLINE_AFTER: u32 = 2;
@@ -261,6 +263,62 @@ async fn offline(events: &Sender<Event>, site: &str, reason: String) -> bool {
         })
         .await
         .is_ok()
+}
+
+/// Whether a request failed because the host reset the connection while it
+/// was being opened, before the request was sent. The reset can arrive
+/// wrapped in an `io::Error` of kind `Other` that `source()` steps over, so
+/// the wrapped error is checked too.
+fn connect_reset(e: &Error) -> bool {
+    let Error::AWS(AWSError::S3GetObjectRequest(e) | AWSError::S3ListObjects(e)) = e else {
+        return false;
+    };
+    if !e.is_connect() {
+        return false;
+    }
+    let is_reset = |e: &io::Error| {
+        e.kind() == io::ErrorKind::ConnectionReset
+            || e.get_ref()
+                .and_then(|inner| inner.downcast_ref::<io::Error>())
+                .is_some_and(|inner| inner.kind() == io::ErrorKind::ConnectionReset)
+    };
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    while let Some(error) = source {
+        if error.downcast_ref::<io::Error>().is_some_and(is_reset) {
+            return true;
+        }
+        source = error.source();
+    }
+    false
+}
+
+/// Failed calls in a row. Every failure counts toward the restart; only one
+/// that says something about the feed counts toward `offline`.
+#[derive(Default)]
+struct Failures {
+    calls: u32,
+    evidence: u32,
+}
+
+impl Failures {
+    fn record(&mut self, connect_reset: bool) {
+        self.calls += 1;
+        if !connect_reset {
+            self.evidence += 1;
+        }
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    fn offline(&self) -> bool {
+        self.evidence >= OFFLINE_AFTER
+    }
+
+    fn restart(&self) -> bool {
+        self.calls >= RESTART_AFTER
+    }
 }
 
 /// Download one dated chunk; caller bounds the whole operation with a timeout.
@@ -648,7 +706,7 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
         }
         skip_known = true;
 
-        let mut failures = 0;
+        let mut failures = Failures::default();
         let mut deadline = Instant::now() + QUIET_RESTART;
         loop {
             let next = wait_for_progress(deadline, cursor, async |mut cursor| {
@@ -675,7 +733,7 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
             cursor = next_cursor;
             match next {
                 Ok(Ok(Some(chunk))) => {
-                    failures = 0;
+                    failures.clear();
                     // Walking old generations is not progress: rediscover if
                     // no genuinely recent chunk arrives within the deadline.
                     if Utc::now().naive_utc() - *chunk.identifier.date_time_prefix()
@@ -694,27 +752,27 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
                 }
                 Ok(Ok(None)) => unreachable!("empty polls are consumed by wait_for_progress"),
                 Ok(Err(e)) => {
-                    failures += 1;
+                    failures.record(connect_reset(&e));
                     let reason = format!("fetching the next chunk: {e} ({e:?})");
-                    if failures < OFFLINE_AFTER {
+                    if !failures.offline() {
                         live_log(&site, format_args!("{reason}; retrying"));
                     } else if !offline(&events, &site, reason).await {
                         return;
                     }
-                    if failures >= RESTART_AFTER {
+                    if failures.restart() {
                         break;
                     }
                     sleep(BACK_OFF).await;
                 }
                 Err(_) => {
-                    failures += 1;
+                    failures.record(false);
                     let reason = "fetching the next chunk timed out".to_owned();
-                    if failures < OFFLINE_AFTER {
+                    if !failures.offline() {
                         live_log(&site, format_args!("{reason}; retrying"));
                     } else if !offline(&events, &site, reason).await {
                         return;
                     }
-                    if failures >= RESTART_AFTER {
+                    if failures.restart() {
                         break;
                     }
                     sleep(BACK_OFF).await;
@@ -964,6 +1022,106 @@ mod tests {
                 .await;
                 assert!(result.is_err());
             });
+    }
+
+    /// `true` is a connection reset while connecting; `false` is any other
+    /// failed call.
+    fn after(sequence: &[bool]) -> Failures {
+        let mut failures = Failures::default();
+        for &connect_reset in sequence {
+            failures.record(connect_reset);
+        }
+        failures
+    }
+
+    #[test]
+    fn a_connect_reset_counts_toward_the_restart_but_not_offline() {
+        assert!(!after(&[true, true]).offline());
+        assert!(!after(&[true, false]).offline());
+        assert!(!after(&[false, true]).offline());
+        assert!(after(&[false, true, false]).offline());
+        assert!(after(&[false, false]).offline());
+        let resets = after(&[true, true, true, true]);
+        assert!(resets.restart());
+        assert!(!resets.offline());
+        assert!(after(&[true, false, false, true]).restart());
+        assert!(!after(&[true, false, false]).restart());
+        let mut failures = after(&[false, true, false]);
+        assert!(failures.offline());
+        failures.clear();
+        failures.record(false);
+        assert!(!failures.offline());
+        assert!(!failures.restart());
+    }
+
+    /// Run a socket test on its own runtime, bounded so it cannot hang.
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async { timeout(Duration::from_secs(20), future).await })
+            .expect("socket test hung")
+    }
+
+    /// A host that accepts the connection, reads the whole TLS ClientHello,
+    /// and resets the connection instead of answering it.
+    #[test]
+    fn a_reset_during_the_handshake_is_a_connect_reset() {
+        use tokio::io::AsyncReadExt;
+        block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("https://{}/", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut header = [0; 5];
+                stream.read_exact(&mut header).await.unwrap();
+                let mut hello = vec![0; u16::from_be_bytes([header[3], header[4]]).into()];
+                stream.read_exact(&mut hello).await.unwrap();
+                stream.set_zero_linger().unwrap();
+            });
+            let e = reqwest::Client::new().get(url).send().await.unwrap_err();
+            server.await.unwrap();
+            assert!(e.is_connect());
+            assert!(connect_reset(&Error::AWS(AWSError::S3GetObjectRequest(e))));
+        });
+    }
+
+    /// A host that reads the request over an open connection and resets
+    /// it: the connection was made, so the reset is not a connect fault.
+    #[test]
+    fn a_reset_after_connecting_is_not_a_connect_reset() {
+        use tokio::io::AsyncReadExt;
+        block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 16];
+                stream.read_exact(&mut request).await.unwrap();
+                stream.set_zero_linger().unwrap();
+            });
+            let e = reqwest::Client::new().get(url).send().await.unwrap_err();
+            server.await.unwrap();
+            assert!(!e.is_connect());
+            assert!(!connect_reset(&Error::AWS(AWSError::S3ListObjects(e))));
+        });
+    }
+
+    /// A port that is bound but not listening refuses the connection, and
+    /// stays ours for the length of the test.
+    #[test]
+    fn a_refused_connection_is_not_a_connect_reset() {
+        block_on(async {
+            let socket = tokio::net::TcpSocket::new_v4().unwrap();
+            socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+            let url = format!("https://{}/", socket.local_addr().unwrap());
+            let e = reqwest::Client::new().get(url).send().await.unwrap_err();
+            drop(socket);
+            assert!(e.is_connect());
+            assert!(!connect_reset(&Error::AWS(AWSError::S3GetObjectRequest(e))));
+            assert!(!connect_reset(&Error::AWS(AWSError::S3ObjectNotFound)));
+        });
     }
 
     #[test]

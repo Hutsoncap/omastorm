@@ -57,11 +57,13 @@ Backfill reads the day's archive listing and each file's header for its slot.
 SAILS and MRLE extra low-level cuts are not separate frames.
 
 The poller bounds requests with timeouts and retries with backoff. Four
-failed chunk fetches restart discovery. An empty listing is normal between
-chunks, but 90 seconds without a recent chunk (higher cuts of a live volume
-still arrive every 4–12 s) restarts discovery. The poller ignores leftover
-chunks from an earlier volume cycle on both join and transition, and backfill
-uses only the matching dated generation. Independently, the engine
+failed chunk fetches without a chunk in between restart discovery, and two
+report offline; a connection reset while connecting counts toward the
+restart but not toward offline. An empty listing is normal between chunks,
+but 90 seconds without a recent chunk (higher cuts of a live volume still
+arrive every 4–12 s) restarts discovery. The poller ignores leftover chunks
+from an earlier volume cycle on both join and transition, and backfill uses
+only the matching dated generation. Independently, the engine
 respawns a poller whose task has exited, or whose newest radial is thirty
 minutes old and has not been rediscovered since. A rediscovery that finds
 only a sweep already in the catalog does not republish it or clear
