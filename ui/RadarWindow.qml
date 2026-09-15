@@ -348,6 +348,7 @@ Item {
     IpcHandler {
         target: "location"
         function open(query: string): void { locationPicker.show(query); }
+        function prompt(): void { locationPicker.show("", true); }
         function accept(): void { locationPicker.accept(); }
         function close(): void { locationPicker.close(); }
         function move(delta: int): void { locationPicker.move(delta); }

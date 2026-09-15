@@ -2,14 +2,14 @@
 
 Live NEXRAD radar in your Omarchy bar. Beta.
 
+<p align="center">
+  <img src="docs/media/readme/hero.png" alt="Omastorm window and bar popover">
+</p>
+
 A radar that lives next to the clock. The popover is the station nearest you
 and the actual scan time. Click the map (or press Enter) for the full window:
 every dish in the network, the sweep at native resolution, a two-hour loop
 you can play and scrub, drawn in your Omarchy theme.
-
-![The Omastorm window](docs/media/readme/window.png)
-
-![The Omastorm bar popover](docs/media/readme/popover.png)
 
 This page is the user guide: install, first run, and everyday use. How the
 code is built lives in [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -155,8 +155,11 @@ Three treatments sample the same gate and palette. They only change how each
 
 ![Pixels, Glyphs, and Stipple](docs/media/readme/treatments.png)
 
-Colors, type, and spacing come from the active Omarchy theme and follow it
-when the theme changes. Radar color comes only from the sweep.
+Chrome follows the Omarchy theme. Radar color comes only from the sweep.
+
+<p align="center">
+  <img src="docs/media/readme/themes.png" alt="Tokyo Night and Flexoki Light">
+</p>
 
 `?` lists every key. They are all rebindable.
 

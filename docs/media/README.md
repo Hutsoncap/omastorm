@@ -9,13 +9,21 @@ bash scripts/capture-readme.sh
 ```
 
 Isolated daemons, no login plugin, no desktop config. Needs a working desktop
-OpenGL session. Stills are 640×480 (above the window's compact breakpoint).
-Writes:
+OpenGL session. Windows are 640×480.
+
+These are **presentation stills**, not a live take: they paint the archived
+Moore/KTLX volume (`data/raw/KTLX20130520_201643_V06.gz`) with live chrome
+(LIVE, a short age, no ARCHIVED badge) so the README shows a real storm
+instead of whatever the feed is doing today. Tokyo Night is the dark theme;
+Flexoki Light is the light one.
 
 | File | What it is |
 | --- | --- |
-| `readme/window.png` | Live window, Glyphs |
-| `readme/popover.png` | Bar popover, Glyphs |
+| `readme/hero.png` | Window + popover, Tokyo Night |
+| `readme/window.png` | Window, Tokyo Night |
+| `readme/window-light.png` | Window, Flexoki Light |
+| `readme/themes.png` | Dark and light side by side |
+| `readme/popover.png` | Bar popover, Tokyo Night |
 | `readme/onboard.png` | First-run location prompt |
 | `readme/search-city.png` | Search, city query |
 | `readme/search-site.png` | Search, site id |
