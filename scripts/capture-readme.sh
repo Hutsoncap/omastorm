@@ -57,8 +57,8 @@ cleanup() {
 trap cleanup EXIT
 
 wait_ipc() {
-  local pid=$1 i
-  for i in {1..120}; do
+  local pid=$1
+  for _ in {1..120}; do
     quickshell ipc --pid "$pid" call keys status >/dev/null 2>&1 && return 0
     sleep .1
   done
@@ -93,8 +93,8 @@ grab() {
     case ${words[0]} in
       sleep) sleep "${words[1]}" ;;
       wait-matches)
-        local needle=${words[1]} m i
-        for i in {1..50}; do
+        local needle=${words[1]} m
+        for _ in {1..50}; do
           m=$(quickshell ipc --pid "$pid" call location matches 2>/dev/null || true)
           [[ $m == *"$needle"* ]] && break
           sleep .1
@@ -126,8 +126,8 @@ grab_popover() {
     OMASTORM_STATE="$scratch/empty-state.json" \
     quickshell -p "$harness_dir/PopoverHarness.qml" > "$scratch/popover.log" 2>&1 &
   local pid=$!
-  local ready=0 i status
-  for i in {1..120}; do
+  local ready=0 status
+  for _ in {1..120}; do
     status=$(quickshell ipc --pid "$pid" call popover status 2>/dev/null || true)
     if [[ -n $status ]] && jq -e '.site == "KTLX" and (.frame | contains("loading") | not)' >/dev/null 2>&1 <<<"$status"; then
       ready=1
@@ -143,7 +143,7 @@ grab_popover() {
   fi
   sleep 1.5
   quickshell ipc --pid "$pid" call popover capture "$raw"
-  for i in {1..50}; do [[ -s $raw ]] && break; sleep .1; done
+  for _ in {1..50}; do [[ -s $raw ]] && break; sleep .1; done
   quickshell ipc --pid "$pid" call popover quit >/dev/null 2>&1 || true
   wait "$pid" 2>/dev/null || true
   [[ -s $raw ]] || { cat "$scratch/popover.log"; echo "No popover capture" >&2; exit 1; }
