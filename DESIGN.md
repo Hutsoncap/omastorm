@@ -57,15 +57,13 @@ line is the age only, right-aligned under that row.
 strip stamp is the absolute observation time (date, time, zone). Locale
 picks date order and 12/24h only; dates stay numeric. Locale also picks
 kilometres or miles for the scale bar and picker distances. The tick strip is
-position in the loop, not a second clock. It has 60 positions when the
-window is wide enough; compact widths show one tick per available frame
-only (empty pads need room or they read as a dotted cliff). The loop is the
+position in the loop, not a second clock. One tick per timeline entry,
+spread across the strip, at every width; no empty pads. The loop is the
 last two hours of completed scans, 60 at most; older frames leave the
 catalog, so a station watched yesterday and again tonight loops tonight
-only. An extra live sweep beyond 60 completed scans adds a selectable tick
-and is included in the frame count. Available frames fill from the left;
-unused positions are faint, short, and cannot be sought. Each available
-tick represents one frame, without extra gap ticks or a baseline.
+only. The sweep in progress is an outlined tick after the complete frames
+and is included in the frame count. Each tick represents one frame, without
+extra gap ticks or a baseline.
 
 ## Location, onboarding, and map
 
@@ -124,8 +122,11 @@ camera. Do not persist the automatically selected station.
 Closing preserves the view. Reopening restores it, with explicit config
 values taking precedence. Expanding the popover preserves its center, zoom,
 station, frame, and playback. An engine reconnect restores the necessary
-commands without resetting the user's camera. Weather location supplies an
-initial view; subsequent weather changes do not overwrite a remembered view.
+commands without resetting the user's camera; the window and the bar share
+one remembered lock and follow it, so a restart brings back the station the
+user last chose, not whichever client reconnects last. Weather location
+supplies an initial view; subsequent weather changes do not overwrite a
+remembered view.
 
 Explicit coordinates are honored on every launch and do not imply a radar
 lock. A configured center far from a locked radar is valid: preserve both,
